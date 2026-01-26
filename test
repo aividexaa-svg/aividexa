@@ -1,0 +1,6483 @@
+"use client";
+
+import React, { useEffect, useRef, useState, useCallback } from "react";
+import { auth, db } from "@/firebase/firebaseConfig";
+import {
+  doc,
+  getDocs,
+  collection,
+  updateDoc,
+  serverTimestamp,
+  addDoc,
+  deleteDoc,
+} from "firebase/firestore";
+import { onAuthStateChanged, signOut } from "firebase/auth";
+
+type Message = {
+  role: "user" | "ai";
+  text: string;
+};
+
+type Chat = {
+  id: string;
+  title: string;
+  messages: Message[];
+  pinned?: boolean;
+};
+
+export default function ChatPage() {
+  const [user, setUser] = useState<any>(null);
+
+  const [chats, setChats] = useState<Chat[]>([]);
+  const [activeChatId, setActiveChatId] = useState<string | null>(null);
+
+  const [input, setInput] = useState("");
+  const [isTyping, setIsTyping] = useState(false);
+
+  const botTimeout = useRef<any>(null);
+
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [openChatMenu, setOpenChatMenu] = useState<string | null>(null);
+
+  const chatMenuRef = useRef<HTMLDivElement>(null);
+  const profileRef = useRef<HTMLDivElement>(null);
+  const [profileOpen, setProfileOpen] = useState(false);
+
+  /* AUTH LISTENER */
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (u) => {
+      if (u) {
+        setUser(u);
+        loadChats(u.uid);
+      } else {
+        setUser(null);
+      }
+    });
+    return () => unsub();
+  }, []);
+
+  /* CLICK OUTSIDE HANDLER */
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (chatMenuRef.current && !chatMenuRef.current.contains(e.target as Node)) {
+        setOpenChatMenu(null);
+      }
+
+      if (profileRef.current && !profileRef.current.contains(e.target as Node)) {
+        setProfileOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  /* LOAD CHATS */
+  const loadChats = async (uid: string) => {
+    const snap = await getDocs(collection(db, "users", uid, "chats"));
+    const fetched: Chat[] = [];
+
+    snap.forEach((docSnapshot) => {
+      fetched.push({
+        id: docSnapshot.id,
+        ...(docSnapshot.data() as any),
+      });
+    });
+
+    setChats(fetched.sort((a, b) => (a.pinned === b.pinned ? 0 : a.pinned ? -1 : 1)));
+
+    if (fetched.length > 0) setActiveChatId(fetched[0].id);
+  };
+
+  /* NEW CHAT */
+  const newChat = useCallback(async () => {
+    if (!user) return;
+
+    const chatRef = await addDoc(collection(db, "users", user.uid, "chats"), {
+      title: "New Chat",
+      pinned: false,
+      messages: [],
+      updatedAt: serverTimestamp(),
+    });
+
+    setChats((prev) => [
+      { id: chatRef.id, title: "New Chat", messages: [], pinned: false },
+      ...prev,
+    ]);
+
+    setActiveChatId(chatRef.id);
+  }, [user]);
+
+  const handleSetActiveChat = useCallback(
+    (id: string) => {
+      if (activeChatId === id) return;
+      setActiveChatId(id);
+    },
+    [activeChatId]
+  );
+
+  /* PIN */
+  const togglePin = useCallback(
+    async (id: string) => {
+      if (!user) return;
+
+      const chat = chats.find((c) => c.id === id);
+      if (!chat) return;
+
+      if (!chat.pinned && chats.filter((c) => c.pinned).length >= 3) {
+        alert("You can pin only 3 chats.");
+        return;
+      }
+
+      const newPinned = !chat.pinned;
+
+      await updateDoc(doc(db, "users", user.uid, "chats", id), {
+        pinned: newPinned,
+      });
+
+      setChats((prev) =>
+        prev.map((c) => (c.id === id ? { ...c, pinned: newPinned } : c))
+      );
+
+      setOpenChatMenu(null);
+    },
+    [user, chats]
+  );
+
+  /* RENAME */
+  const renameChat = useCallback(
+    async (id: string) => {
+      if (!user) return;
+
+      const name = prompt("Rename chat");
+      if (!name) return;
+
+      await updateDoc(doc(db, "users", user.uid, "chats", id), {
+        title: name,
+        updatedAt: serverTimestamp(),
+      });
+
+      setChats((prev) =>
+        prev.map((c) => (c.id === id ? { ...c, title: name } : c))
+      );
+
+      setOpenChatMenu(null);
+    },
+    [user]
+  );
+
+  /* DELETE */
+  const deleteChat = useCallback(
+    async (id: string) => {
+      if (!user) return;
+
+      await deleteDoc(doc(db, "users", user.uid, "chats", id));
+
+      const updated = chats.filter((c) => c.id !== id);
+      setChats(updated);
+
+      if (activeChatId === id && updated.length > 0) setActiveChatId(updated[0].id);
+
+      setOpenChatMenu(null);
+    },
+    [user, chats, activeChatId]
+  );
+
+  /* STOP BOT */
+  const stopBot = useCallback(() => {
+    if (botTimeout.current) clearTimeout(botTimeout.current);
+    botTimeout.current = null;
+    setIsTyping(false);
+  }, []);
+
+  /* SEND MESSAGE */
+  const sendMessage = useCallback(
+    async (text: string) => {
+      if (!user || !activeChatId || !text.trim()) return;
+
+      const target = chats.find((c) => c.id === activeChatId)!;
+      const newMessages = [...target.messages, { role: "user" as const, text }];
+
+      setChats((prev) =>
+        prev.map((c) => (c.id === activeChatId ? { ...c, messages: newMessages } : c))
+      );
+
+      await updateDoc(doc(db, "users", user.uid, "chats", activeChatId), {
+        messages: newMessages,
+        updatedAt: serverTimestamp(),
+        title: target.messages.length === 0 ? text.slice(0, 24) : target.title,
+      });
+
+      setInput("");
+      setIsTyping(true);
+
+      botTimeout.current = setTimeout(async () => {
+        const botMsg = { role: "ai" as const, text: "This is a placeholder response." };
+        const finalMessages = [...newMessages, botMsg];
+
+        setChats((prev) =>
+          prev.map((c) =>
+            c.id === activeChatId ? { ...c, messages: finalMessages } : c
+          )
+        );
+
+        await updateDoc(doc(db, "users", user.uid, "chats", activeChatId), {
+          messages: finalMessages,
+          updatedAt: serverTimestamp(),
+        });
+
+        setIsTyping(false);
+      }, 1200);
+    },
+    [user, activeChatId, chats]
+  );
+
+  const handleLogout = async () => {
+    await signOut(auth);
+    setUser(null);
+    window.location.href = "/"; // redirect
+  };
+
+  const pinnedChats = chats.filter((c) => c.pinned);
+  const normalChats = chats.filter((c) => !c.pinned);
+
+  return (
+    <div className="relative flex h-screen bg-gradient-to-br from-gray-950 via-black to-gray-900 text-white overflow-hidden">
+
+      {/* MAIN */}
+      <main className="flex-1 flex flex-col">
+
+        <div className="flex items-center gap-3 p-4 border-b border-white/10">
+
+          {!sidebarOpen && (
+            <button onClick={() => setSidebarOpen(true)} className="px-3 py-2 rounded-lg bg-white/10">
+              ☰
+            </button>
+          )}
+
+          <h1 className="font-semibold text-lg">AI Videxa</h1>
+
+          {isTyping && (
+            <button
+              onClick={stopBot}
+              className="ml-auto bg-red-500/80 hover:bg-red-600 text-white px-4 py-2 rounded-lg text-sm"
+            >
+              Stop generating
+            </button>
+          )}
+        </div>
+
+        {/* CHAT */}
+        <div className="flex-1 overflow-y-auto px-6 py-8">
+          <div className="max-w-3xl mx-auto space-y-5">
+
+            {activeChatId &&
+              chats.find((c) => c.id === activeChatId)?.messages.map((msg, i) => (
+                <div
+                  key={i}
+                  className={`max-w-[80%] px-5 py-3 rounded-2xl text-sm ${
+                    msg.role === "user" ? "ml-auto bg-white text-black" : "bg-white/10"
+                  }`}
+                >
+                  {msg.text}
+                </div>
+              ))}
+
+            {isTyping && (
+              <div className="bg-white/10 px-5 py-3 rounded-2xl animate-pulse w-fit">
+                Thinking…
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* INPUT */}
+        <div className="border-t border-white/10 p-4">
+          <div className="max-w-3xl mx-auto flex gap-3">
+            <input
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && input.trim() && sendMessage(input)}
+              placeholder="Message AI Videxa..."
+              className="flex-1 bg-white/10 rounded-2xl px-5 py-3"
+            />
+
+            <button
+              onClick={() => sendMessage(input)}
+              disabled={!input.trim()}
+              className={`px-6 rounded-2xl font-semibold ${
+                input.trim()
+                  ? "bg-white text-black cursor-pointer"
+                  : "bg-white/30 text-black/40 cursor-not-allowed"
+              }`}
+            >
+              Send
+            </button>
+          </div>
+        </div>
+      </main>
+
+      {/* SIDEBAR */}
+      <aside
+        className={`absolute right-0 top-0 h-full w-64 transition-all duration-300 ease-in-out
+        bg-white/5 backdrop-blur-xl border-l border-white/10 flex flex-col ${
+          sidebarOpen ? "translate-x-0 opacity-100" : "translate-x-full opacity-0"
+        }`}
+      >
+        <div className="flex justify-between px-4 py-4 border-b border-white/10">
+          <span className="font-semibold">Chats</span>
+          <button onClick={() => setSidebarOpen(false)}>✕</button>
+        </div>
+
+        <div className="px-4 py-3">
+          <button onClick={newChat} className="w-full bg-white text-black py-2 rounded-xl font-semibold">
+            + New Chat
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-2 space-y-4">
+
+          {pinnedChats.length > 0 && (
+            <div>
+              <p className="px-3 text-xs uppercase tracking-wider text-gray-400">Pinned</p>
+
+              {pinnedChats.map((chat) => (
+                <MemoChatRow
+                  key={chat.id}
+                  chat={chat}
+                  activeChatId={activeChatId}
+                  setActiveChatId={handleSetActiveChat}
+                  openChatMenu={openChatMenu}
+                  setOpenChatMenu={setOpenChatMenu}
+                  chatMenuRef={chatMenuRef}
+                  togglePin={togglePin}
+                  renameChat={renameChat}
+                  deleteChat={deleteChat}
+                />
+              ))}
+            </div>
+          )}
+
+          {normalChats.map((chat) => (
+            <MemoChatRow
+              key={chat.id}
+              chat={chat}
+              activeChatId={activeChatId}
+              setActiveChatId={handleSetActiveChat}
+              openChatMenu={openChatMenu}
+              setOpenChatMenu={setOpenChatMenu}
+              chatMenuRef={chatMenuRef}
+              togglePin={togglePin}
+              renameChat={renameChat}
+              deleteChat={deleteChat}
+            />
+          ))}
+        </div>
+
+        {/* PROFILE */}
+        <div ref={profileRef} className="border-t border-white/10 p-3 relative">
+          <div onClick={() => setProfileOpen(!profileOpen)} className="flex gap-3 p-2 rounded-xl hover:bg-white/10 cursor-pointer">
+            <div className="w-9 h-9 bg-gradient-to-br from-purple-500 to-pink-500 rounded-full flex items-center justify-center font-bold uppercase">
+              {user?.displayName?.[0] || "U"}
+            </div>
+            <div>
+              <p className="text-sm font-medium">{user?.displayName || "User"}</p>
+              <p className="text-xs text-gray-400">Free Plan</p>
+            </div>
+          </div>
+
+          {profileOpen && (
+            <div className="absolute bottom-16 left-3 w-60 rounded-2xl backdrop-blur-xl bg-gradient-to-br from-gray-800 via-black to-gray-900 border border-white/10 shadow-2xl p-4 animate-profileGlow">
+              <div className="pb-2 mb-2 border-b border-white/10">
+                <p className="font-semibold text-lg">{user?.displayName || "User"}</p>
+              </div>
+
+              <MemoMenuItem label="Settings" />
+              <MemoMenuItem label="Help & Support" />
+              <MemoMenuItem label="Edit Profile" />
+              <MemoMenuItem label="Upgrade Plan" highlight />
+
+              <div className="h-px bg-white/10 my-2"></div>
+
+              <button
+                onClick={handleLogout}
+                className="w-full text-left px-4 py-3 text-red-400 hover:bg-red-500/10 rounded-lg transition"
+              >
+                Logout
+              </button>
+            </div>
+          )}
+        </div>
+      </aside>
+
+      <style>
+        {`
+          @keyframes profileGlow {
+            0% { box-shadow: 0 0 10px rgba(255,255,255,0.1); }
+            50% { box-shadow: 0 0 25px rgba(255,255,255,0.25); }
+            100% { box-shadow: 0 0 10px rgba(255,255,255,0.1); }
+          }
+          .animate-profileGlow {
+            animation: profileGlow 5s infinite ease-in-out;
+          }
+        `}
+      </style>
+    </div>
+  );
+}
+
+/* CHAT ROW */
+const ChatRow = ({
+  chat,
+  activeChatId,
+  setActiveChatId,
+  openChatMenu,
+  setOpenChatMenu,
+  chatMenuRef,
+  togglePin,
+  renameChat,
+  deleteChat,
+}: any) => (
+  <div
+    onClick={() => setActiveChatId(chat.id)}
+    className={`group relative flex justify-between px-3 py-2 rounded-lg text-sm cursor-pointer ${
+      chat.id === activeChatId ? "bg-white/15" : "hover:bg-white/10"
+    }`}
+  >
+    <span className="truncate flex items-center gap-1">
+      {chat.pinned && <span className="text-xs opacity-60">*</span>}
+      <span className="truncate">{chat.title}</span>
+    </span>
+
+    <button
+      onClick={(e) => {
+        e.stopPropagation();
+        setOpenChatMenu(openChatMenu === chat.id ? null : chat.id);
+      }}
+    >
+      ⋯
+    </button>
+
+    {openChatMenu === chat.id && (
+      <div
+        ref={chatMenuRef}
+        onClick={(e) => e.stopPropagation()}
+        className="absolute right-2 top-10 w-40 bg-black/90 border border-white/10 rounded-xl shadow-xl z-50"
+      >
+        <button onClick={() => togglePin(chat.id)} className="w-full px-4 py-2 text-left hover:bg-white/10">
+          {chat.pinned ? "Unpin" : "Pin"}
+        </button>
+
+        <button onClick={() => renameChat(chat.id)} className="w-full px-4 py-2 text-left hover:bg-white/10">
+          Rename
+        </button>
+
+        <button onClick={() => deleteChat(chat.id)} className="w-full px-4 py-2 text-left hover:bg-white/10 text-red-400">
+          Delete
+        </button>
+      </div>
+    )}
+  </div>
+);
+
+const MemoChatRow = React.memo(ChatRow);
+
+/* MENU ITEM */
+const MenuItem = ({ label, highlight }: { label: string; highlight?: boolean }) => (
+  <button
+    className={`w-full px-4 py-3 text-left rounded-lg text-sm transition hover:bg-white/10 ${
+      highlight ? "text-yellow-300" : ""
+    }`}
+  >
+    {label}
+  </button>
+);
+
+const MemoMenuItem = React.memo(MenuItem);
+
+
+
+"use client";
+
+import React, { useState, useEffect } from "react";
+import {
+  setDoc,
+  doc,
+  getDocs,
+  collection,
+  query,
+  where,
+} from "firebase/firestore";
+import { updateProfile } from "firebase/auth";
+import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { db, storage, auth } from "@/firebase/firebaseConfig";
+
+interface Props {
+  user: any;
+  isOpen: boolean;
+  onClose: () => void;
+  refreshUser: (updated: any) => void;
+}
+
+export default function EditProfileModal({
+  user,
+  isOpen,
+  onClose,
+  refreshUser,
+}: Props) {
+  const [name, setName] = useState(user?.displayName || "");
+  const [username, setUsername] = useState(user?.username || "");
+  const [dob, setDob] = useState(user?.dob || "");
+  const [gender, setGender] = useState(user?.gender || "");
+  const [bio, setBio] = useState(user?.bio || "");
+  const [photo, setPhoto] = useState<File | null>(null);
+
+  const [saving, setSaving] = useState(false);
+
+  const [checking, setChecking] = useState(false);
+  const [usernameValid, setUsernameValid] = useState<boolean | null>(null);
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (!username) {
+      setUsernameValid(null);
+      setSuggestions([]);
+      return;
+    }
+
+    const timeout = setTimeout(async () => {
+      setChecking(true);
+
+      const q = query(collection(db, "users"), where("username", "==", username));
+      const snap = await getDocs(q);
+
+      const exists = snap.docs.some((d) => d.id !== user.uid);
+      setUsernameValid(!exists);
+
+      if (exists) {
+        const base = username.toLowerCase();
+        const rand = Math.floor(Math.random() * 999);
+
+        setSuggestions([
+          `${base}${rand}`,
+          `${base}_${rand % 100}`,
+          `${base}${new Date().getFullYear()}`,
+        ]);
+      } else {
+        setSuggestions([]);
+      }
+
+      setChecking(false);
+    }, 400);
+
+    return () => clearTimeout(timeout);
+  }, [username, user?.uid]);
+
+  const autoGenerate = () => {
+    const base = (name || "user").toLowerCase().replace(/[^a-z0-9]/g, "");
+    const rand = Math.floor(Math.random() * 999);
+    setUsername(`${base}${rand}`);
+  };
+
+  const handleUsernameChange = (val: string) => {
+    const cleaned = val.toLowerCase().replace(/[^a-z0-9_]/g, "");
+    setUsername(cleaned);
+  };
+
+  const handleSave = async () => {
+    if (!user || saving || usernameValid === false) return;
+
+    setSaving(true);
+
+    const finalName = name.trim() || user.displayName || "";
+    let photoURL = user?.photoURL || null;
+
+    if (photo) {
+      const storageRef = ref(storage, `profilePics/${user.uid}`);
+      await uploadBytes(storageRef, photo);
+      photoURL = await getDownloadURL(storageRef);
+    }
+
+    await setDoc(
+      doc(db, "users", user.uid),
+      { displayName: finalName, username, dob, gender, bio, photoURL },
+      { merge: true }
+    );
+
+    await updateProfile(auth.currentUser!, {
+      displayName: finalName,
+      photoURL: photoURL || undefined,
+    });
+
+    refreshUser({
+      ...user,
+      displayName: finalName,
+      username,
+      dob,
+      gender,
+      bio,
+      photoURL,
+    });
+
+    setSaving(false);
+    onClose();
+  };
+
+  const canSave =
+    !saving &&
+    (usernameValid || username === user?.username || username === "") &&
+    !checking;
+
+  return (
+    <>
+      {isOpen && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-md flex items-center justify-center z-[999] animate-fadeBg">
+          <div className="relative bg-gray-900 border border-purple-600/30 shadow-[0_0_18px_rgba(168,85,247,0.5)] rounded-2xl p-6 w-[430px] max-h-[78vh] overflow-y-auto animate-fadeUp">
+
+            {/* UPDATED SAVING ANIMATION */}
+            {saving && (
+              <div className="absolute inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center rounded-2xl z-50">
+                <div className="w-14 h-14 rounded-full border-4 border-purple-400 border-t-transparent animate-spin shadow-[0_0_20px_rgba(168,85,247,0.7)]"></div>
+              </div>
+            )}
+
+            <h2 className="text-xl text-center font-semibold text-transparent bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text mb-4 drop-shadow-[0_0_6px_rgba(236,72,153,0.75)]">
+              Edit Profile
+            </h2>
+
+            {/* AVATAR */}
+            <div className="flex justify-center mb-4">
+              <label className="cursor-pointer transition hover:scale-110">
+                <input
+                  type="file"
+                  hidden
+                  accept="image/*"
+                  onChange={(e) => setPhoto(e.target.files?.[0] || null)}
+                />
+                <img
+                  src={photo ? URL.createObjectURL(photo) : user?.photoURL || "/default-avatar.png"}
+                  className="w-20 h-20 rounded-full border border-purple-500 shadow-[0_0_15px_rgba(168,85,247,0.7)] object-cover"
+                />
+              </label>
+            </div>
+
+            {/* FULL NAME */}
+            <label className="text-xs text-gray-300">Full Name</label>
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              className="premium-input mb-3 interactive"
+            />
+
+            {/* USERNAME */}
+            <label className="text-xs text-gray-300">Username</label>
+
+            <div className="flex gap-2 mb-1">
+              <input
+                value={username}
+                onChange={(e) => handleUsernameChange(e.target.value)}
+                className={`flex-1 premium-input interactive ${
+                  usernameValid === false
+                    ? "ring-red-500 shadow-[0_0_10px_rgba(255,0,0,0.6)]"
+                    : usernameValid
+                    ? "ring-green-500 shadow-[0_0_10px_rgba(0,255,0,0.4)]"
+                    : ""
+                }`}
+              />
+
+              <button
+                onClick={autoGenerate}
+                className="w-[95px] rounded-lg bg-white/10 hover:bg-white/20 hover:scale-105 transition text-sm shadow-[0_0_10px_rgba(255,255,255,0.1)]"
+              >
+                Auto
+              </button>
+            </div>
+
+            {/* USERNAME FEEDBACK */}
+            <div className="min-h-[42px] text-xs text-gray-200">
+              {checking && <p>Checking…</p>}
+
+              {!checking && usernameValid === false && (
+                <>
+                  <p className="text-red-400 mb-1">Username taken</p>
+                  <div className="flex gap-2 flex-wrap">
+                    {suggestions.map((s, i) => (
+                      <button
+                        key={i}
+                        onClick={() => setUsername(s)}
+                        className="suggestion-chip"
+                      >
+                        {s}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+
+              {!checking && usernameValid === true && username && (
+                <p className="text-green-400">
+                  Available
+                </p>
+              )}
+            </div>
+
+            {/* DATE OF BIRTH */}
+            <label className="text-xs text-gray-300">Date of Birth</label>
+            <input
+              type="date"
+              value={dob}
+              onChange={(e) => setDob(e.target.value)}
+              className="premium-input mb-3 interactive"
+            />
+
+            {/* GENDER */}
+            <label className="text-xs text-gray-300">Gender</label>
+            <select
+              value={gender}
+              onChange={(e) => setGender(e.target.value)}
+              className="premium-input text-gray-200 mb-3 interactive"
+            >
+              <option value="" className="text-black">Select gender</option>
+              <option value="Male" className="text-black">Male</option>
+              <option value="Female" className="text-black">Female</option>
+              <option value="Other" className="text-black">Other</option>
+            </select>
+
+            {/* BIO */}
+            <label className="text-xs text-gray-300">Bio</label>
+            <textarea
+              value={bio}
+              onChange={(e) => setBio(e.target.value)}
+              className="premium-input h-20 resize-none mb-5 interactive"
+            />
+
+            {/* ACTION BUTTONS */}
+            <div className="flex justify-end gap-3">
+              <button onClick={onClose} className="premium-cancel">
+                Cancel
+              </button>
+
+              <button
+                disabled={!canSave}
+                onClick={handleSave}
+                className={`premium-save ${
+                  !canSave && "opacity-40 cursor-not-allowed"
+                } shadow-[0_0_18px_rgba(168,85,247,0.8)]`}
+              >
+                Save
+              </button>
+            </div>
+
+            <style>{`
+              .premium-input {
+                width: 100%;
+                background: rgba(255,255,255,0.08);
+                padding: 8px 10px;
+                border-radius: 8px;
+                outline: none;
+                transition: 0.25s;
+              }
+              .interactive:focus {
+                transform: scale(1.05);
+                box-shadow: 0 0 18px rgba(168,85,247,0.75);
+              }
+
+              .suggestion-chip {
+                background: rgba(255,255,255,0.12);
+                border: 1px solid rgba(255,255,255,0.1);
+                padding: 4px 8px;
+                border-radius: 6px;
+                cursor: pointer;
+                transition: .2s;
+              }
+              .suggestion-chip:hover {
+                background: rgba(168,85,247,0.55);
+                transform: scale(1.05);
+              }
+
+              .premium-save {
+                background: linear-gradient(to right, #a855f7, #ec4899);
+                color: white;
+                padding: 6px 20px;
+                border-radius: 8px;
+                transition: .25s;
+              }
+              .premium-save:hover {
+                transform: scale(1.06);
+                filter: brightness(1.15);
+              }
+
+              .premium-cancel {
+                background: rgba(255,255,255,0.08);
+                color: #ddd;
+                padding: 6px 20px;
+                border-radius: 8px;
+              }
+              .premium-cancel:hover {
+                background: rgba(255,255,255,0.18);
+              }
+
+              @keyframes fadeUp {
+                from { opacity: 0; transform: translateY(20px); }
+                to { opacity: 1; transform: translateY(0); }
+              }
+              .animate-fadeUp { animation: fadeUp .33s ease-out; }
+
+              @keyframes fadeBg {
+                from { opacity: 0; }
+                to { opacity: 1; }
+              }
+              .animate-fadeBg { animation: fadeBg .3s ease-out; }
+            `}</style>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+"use client";
+
+import React, { useEffect, useRef, useState, useCallback } from "react";
+import { useRouter } from "next/navigation";
+import EditProfileModal from "@/Profile/EditProfileModal";
+
+import { db } from "@/firebase/firebaseConfig";
+import {
+  doc,
+  getDocs,
+  collection,
+  updateDoc,
+  serverTimestamp,
+  addDoc,
+  deleteDoc,
+} from "firebase/firestore";
+
+import { useAuth } from "@/contextAuth/AuthContext"; // ⭐ Auth Context
+
+// ------------------ TYPES ------------------
+
+type Message = {
+  role: "user" | "ai";
+  text: string;
+};
+
+type Chat = {
+  id: string;
+  title: string;
+  messages: Message[];
+  pinned?: boolean;
+};
+
+// ------------------ CHAT ROW COMPONENT ------------------
+
+const ChatRow = ({
+  chat,
+  activeChatId,
+  setActiveChatId,
+  openChatMenu,
+  setOpenChatMenu,
+  chatMenuRef,
+  togglePin,
+  renameChat,
+  deleteChat,
+}: any) => (
+  <div
+    onClick={() => setActiveChatId(chat.id)}
+    className={`group relative flex justify-between px-3 py-2 rounded-lg text-sm cursor-pointer ${
+      chat.id === activeChatId ? "bg-white/15" : "hover:bg-white/10"
+    }`}
+  >
+    <span className="truncate flex items-center gap-1">
+      {chat.pinned && <span className="text-xs opacity-60">*</span>}
+      <span className="truncate">{chat.title}</span>
+    </span>
+
+    <button
+      onClick={(e) => {
+        e.stopPropagation();
+        setOpenChatMenu(openChatMenu === chat.id ? null : chat.id);
+      }}
+    >
+      ⋯
+    </button>
+
+    {openChatMenu === chat.id && (
+      <div
+        ref={chatMenuRef}
+        onClick={(e) => e.stopPropagation()}
+        className="absolute right-2 top-10 w-40 bg-black/90 border border-white/10 rounded-xl shadow-xl z-50"
+      >
+        <button onClick={() => togglePin(chat.id)} className="w-full px-4 py-2 text-left hover:bg-white/10">
+          {chat.pinned ? "Unpin" : "Pin"}
+        </button>
+
+        <button onClick={() => renameChat(chat.id)} className="w-full px-4 py-2 text-left hover:bg-white/10">
+          Rename
+        </button>
+
+        <button onClick={() => deleteChat(chat.id)} className="w-full px-4 py-2 text-left hover:bg-white/10 text-red-400">
+          Delete
+        </button>
+      </div>
+    )}
+  </div>
+);
+
+const MemoChatRow = React.memo(ChatRow);
+
+const MenuItem = ({ label, highlight }: { label: string; highlight?: boolean }) => (
+  <button
+    className={`w-full px-4 py-3 text-left rounded-lg text-sm transition hover:bg-white/10 ${
+      highlight ? "text-yellow-300" : ""
+    }`}
+  >
+    {label}
+  </button>
+);
+
+const MemoMenuItem = React.memo(MenuItem);
+
+// ------------------ MAIN PAGE ------------------
+
+export default function ChatPage() {
+  const router = useRouter();
+  const { user, logout } = useAuth();
+
+  const [editProfileOpen, setEditProfileOpen] = useState(false);
+  const [chats, setChats] = useState<Chat[]>([]);
+  const [activeChatId, setActiveChatId] = useState<string | null>(null);
+  const [input, setInput] = useState("");
+  const [isTyping, setIsTyping] = useState(false);
+
+  const botTimeout = useRef<any>(null);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [openChatMenu, setOpenChatMenu] = useState<string | null>(null);
+
+  const profileRef = useRef<HTMLDivElement>(null);
+  const chatMenuRef = useRef<HTMLDivElement>(null);
+  const [profileOpen, setProfileOpen] = useState(false);
+
+  // ------------------ AUTH REDIRECT FIX ------------------
+
+  useEffect(() => {
+    if (user === null) {
+      router.push("/login");
+    }
+  }, [user, router]);
+
+  // ------------------ LOAD CHATS ------------------
+
+  useEffect(() => {
+    if (user) loadChats(user.uid);
+  }, [user]);
+
+  const loadChats = async (uid: string) => {
+    const snap = await getDocs(collection(db, "users", uid, "chats"));
+    const fetched: Chat[] = [];
+
+    snap.forEach((docSnapshot) => {
+      fetched.push({
+        id: docSnapshot.id,
+        ...(docSnapshot.data() as any),
+      });
+    });
+
+    setChats(fetched.sort((a, b) => (a.pinned === b.pinned ? 0 : a.pinned ? -1 : 1)));
+
+    if (fetched.length > 0) setActiveChatId(fetched[0].id);
+  };
+
+  // ------------------ CHAT ACTIONS ------------------
+
+  const newChat = useCallback(async () => {
+    if (!user) return;
+
+    const chatRef = await addDoc(collection(db, "users", user.uid, "chats"), {
+      title: "New Chat",
+      pinned: false,
+      messages: [],
+      updatedAt: serverTimestamp(),
+    });
+
+    setChats((prev) => [
+      { id: chatRef.id, title: "New Chat", messages: [], pinned: false },
+      ...prev,
+    ]);
+
+    setActiveChatId(chatRef.id);
+  }, [user]);
+
+  const togglePin = useCallback(
+    async (id: string) => {
+      if (!user) return;
+
+      const chat = chats.find((c) => c.id === id);
+      if (!chat) return;
+
+      if (!chat.pinned && chats.filter((c) => c.pinned).length >= 3) {
+        alert("You can pin only 3 chats.");
+        return;
+      }
+
+      await updateDoc(doc(db, "users", user.uid, "chats", id), {
+        pinned: !chat.pinned,
+      });
+
+      setChats((prev) =>
+        prev.map((c) => (c.id === id ? { ...c, pinned: !chat.pinned } : c))
+      );
+      setOpenChatMenu(null);
+    },
+    [user, chats]
+  );
+
+  const renameChat = useCallback(
+    async (id: string) => {
+      if (!user) return;
+      const name = prompt("Rename chat");
+      if (!name) return;
+
+      await updateDoc(doc(db, "users", user.uid, "chats", id), {
+        title: name,
+        updatedAt: serverTimestamp(),
+      });
+
+      setChats((prev) => prev.map((c) => (c.id === id ? { ...c, title: name } : c)));
+      setOpenChatMenu(null);
+    },
+    [user]
+  );
+
+  const deleteChat = useCallback(
+    async (id: string) => {
+      if (!user) return;
+      await deleteDoc(doc(db, "users", user.uid, "chats", id));
+
+      const updated = chats.filter((c) => c.id !== id);
+      setChats(updated);
+
+      if (activeChatId === id && updated.length > 0) setActiveChatId(updated[0].id);
+
+      setOpenChatMenu(null);
+    },
+    [user, chats, activeChatId]
+  );
+
+  // ------------------ SEND MESSAGE ------------------
+
+  const sendMessage = useCallback(
+    async (text: string) => {
+      if (!user || !activeChatId || !text.trim()) return;
+
+      const target = chats.find((c) => c.id === activeChatId)!;
+
+      const newMessages = [...target.messages, { role: "user" as const, text }];
+
+
+      setChats((prev) =>
+        prev.map((c) => (c.id === activeChatId ? { ...c, messages: newMessages } : c))
+      );
+
+      await updateDoc(doc(db, "users", user.uid, "chats", activeChatId), {
+        messages: newMessages,
+        updatedAt: serverTimestamp(),
+        title: target.messages.length === 0 ? text.slice(0, 24) : target.title,
+      });
+
+      setInput("");
+      setIsTyping(true);
+
+      botTimeout.current = setTimeout(async () => {
+        const botMsg = { role: "ai" as const, text: "This is a placeholder response." };
+        const final = [...newMessages, botMsg];
+
+        setChats((prev) =>
+          prev.map((c) => (c.id === activeChatId ? { ...c, messages: final } : c))
+        );
+
+        await updateDoc(doc(db, "users", user.uid, "chats", activeChatId), {
+          messages: final,
+          updatedAt: serverTimestamp(),
+        });
+
+        setIsTyping(false);
+      }, 1200);
+    },
+    [user, activeChatId, chats]
+  );
+
+  const stopBot = () => {
+    if (botTimeout.current) clearTimeout(botTimeout.current);
+    setIsTyping(false);
+  };
+
+  // ------------------ LOGOUT ------------------
+
+  const handleLogout = async () => {
+    await logout();
+    router.push("/");
+  };
+
+  // ------------------ WAIT FOR USER ------------------
+
+  if (user === undefined) return null; // still loading
+
+  if (!user) return null; // router push will handle redirect
+
+  const pinnedChats = chats.filter((c) => c.pinned);
+  const normalChats = chats.filter((c) => !c.pinned);
+
+  // ------------------ JSX RETURN ------------------
+
+  return (
+    <>
+      <div className="relative flex h-screen bg-gradient-to-br from-gray-950 via-black to-gray-900 text-white overflow-hidden">
+
+        {/* Header */}
+        <main className="flex-1 flex flex-col">
+          <div className="flex items-center gap-3 p-4 border-b border-white/10">
+            {!sidebarOpen && (
+              <button onClick={() => setSidebarOpen(true)} className="px-3 py-2 rounded-lg bg-white/10">
+                ☰
+              </button>
+            )}
+            <h1 className="font-semibold text-lg">AI Videxa</h1>
+
+            {isTyping && (
+              <button
+                onClick={stopBot}
+                className="ml-auto bg-red-500/80 hover:bg-red-600 text-white px-4 py-2 rounded-lg text-sm"
+              >
+                Stop generating
+              </button>
+            )}
+          </div>
+
+          {/* Messages */}
+          <div className="flex-1 overflow-y-auto px-6 py-8">
+            <div className="max-w-3xl mx-auto space-y-5">
+              {activeChatId &&
+                chats.find((c) => c.id === activeChatId)?.messages.map((msg, i) => (
+                  <div
+                    key={i}
+                    className={`max-w-[80%] px-5 py-3 rounded-2xl text-sm ${
+                      msg.role === "user" ? "ml-auto bg-white text-black" : "bg-white/10"
+                    }`}
+                  >
+                    {msg.text}
+                  </div>
+                ))}
+
+              {isTyping && <div className="bg-white/10 px-5 py-3 rounded-2xl animate-pulse w-fit">Thinking…</div>}
+            </div>
+          </div>
+
+          {/* Input */}
+          <div className="border-t border-white/10 p-4">
+            <div className="max-w-3xl mx-auto flex gap-3">
+              <input
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && input.trim() && sendMessage(input)}
+                placeholder="Message AI Videxa..."
+                className="flex-1 bg-white/10 rounded-2xl px-5 py-3"
+              />
+
+              <button
+                onClick={() => sendMessage(input)}
+                disabled={!input.trim()}
+                className={`px-6 rounded-2xl font-semibold ${
+                  input.trim() ? "bg-white text-black" : "bg-white/30 text-black/40 cursor-not-allowed"
+                }`}
+              >
+                Send
+              </button>
+            </div>
+          </div>
+        </main>
+
+        {/* Sidebar */}
+        <aside
+          className={`absolute right-0 top-0 h-full w-64 transition-all duration-300 ease-in-out
+            bg-white/5 backdrop-blur-xl border-l border-white/10 flex flex-col ${
+              sidebarOpen ? "translate-x-0 opacity-100" : "translate-x-full opacity-0"
+            }`}
+        >
+          <div className="flex justify-between px-4 py-4 border-b border-white/10">
+            <span className="font-semibold">Chats</span>
+            <button onClick={() => setSidebarOpen(false)}>✕</button>
+          </div>
+
+          <div className="px-4 py-3">
+            <button onClick={newChat} className="w-full bg-white text-black py-2 rounded-xl font-semibold">
+              + New Chat
+            </button>
+          </div>
+
+          <div className="flex-1 overflow-y-auto px-2 space-y-4">
+            {pinnedChats.length > 0 && (
+              <div>
+                <p className="px-3 text-xs uppercase tracking-wider text-gray-400">Pinned</p>
+
+                {pinnedChats.map((chat) => (
+                  <MemoChatRow
+                    key={chat.id}
+                    chat={chat}
+                    activeChatId={activeChatId}
+                    setActiveChatId={setActiveChatId}
+                    openChatMenu={openChatMenu}
+                    setOpenChatMenu={setOpenChatMenu}
+                    chatMenuRef={chatMenuRef}
+                    togglePin={togglePin}
+                    renameChat={renameChat}
+                    deleteChat={deleteChat}
+                  />
+                ))}
+              </div>
+            )}
+
+            {normalChats.map((chat) => (
+              <MemoChatRow
+                key={chat.id}
+                chat={chat}
+                activeChatId={activeChatId}
+                setActiveChatId={setActiveChatId}
+                openChatMenu={openChatMenu}
+                setOpenChatMenu={setOpenChatMenu}
+                chatMenuRef={chatMenuRef}
+                togglePin={togglePin}
+                renameChat={renameChat}
+                deleteChat={deleteChat}
+              />
+            ))}
+          </div>
+
+          {/* Profile */}
+          <div ref={profileRef} className="border-t border-white/10 p-3 relative">
+            <div onClick={() => setProfileOpen(!profileOpen)} className="flex gap-3 p-2 rounded-xl hover:bg-white/10 cursor-pointer">
+              <div className="w-9 h-9 rounded-full overflow-hidden border border-white/20 flex items-center justify-center bg-gradient-to-br from-purple-500 to-pink-500">
+                {user?.photoURL ? (
+                  <img src={user.photoURL} className="w-full h-full object-cover rounded-full" />
+                ) : (
+                  <span className="font-bold uppercase">{user?.displayName?.[0] || "U"}</span>
+                )}
+              </div>
+
+              <div>
+                <p className="text-sm font-medium">{user?.displayName || "User"}</p>
+                <p className="text-xs text-gray-400">Free Plan</p>
+              </div>
+            </div>
+
+            {profileOpen && (
+              <div className="absolute bottom-16 left-3 w-60 rounded-2xl backdrop-blur-xl bg-gradient-to-br from-gray-800 via-black to-gray-900 border border-white/10 shadow-2xl p-4 animate-profileGlow">
+                <div className="pb-2 mb-2 border-b border-white/10">
+                  <p className="font-semibold text-lg">{user?.displayName || "User"}</p>
+                </div>
+
+                <MemoMenuItem label="Settings" />
+                <MemoMenuItem label="Help & Support" />
+
+                <button
+                  onClick={() => {
+                    setProfileOpen(false);
+                    setEditProfileOpen(true);
+                  }}
+                  className="w-full text-left px-4 py-3 hover:bg-white/10 rounded-lg"
+                >
+                  Edit Profile
+                </button>
+
+                <MemoMenuItem label="Upgrade Plan" highlight />
+
+                <div className="h-px bg-white/10 my-2"></div>
+
+                <button
+                  onClick={handleLogout}
+                  className="w-full text-left px-4 py-3 text-red-400 hover:bg-red-500/10 rounded-lg transition"
+                >
+                  Logout
+                </button>
+              </div>
+            )}
+          </div>
+        </aside>
+
+        <style>
+          {`
+            @keyframes profileGlow {
+              0% { box-shadow: 0 0 10px rgba(255,255,255,0.1); }
+              50% { box-shadow: 0 0 25px rgba(255,255,255,0.25); }
+              100% { box-shadow: 0 0 10px rgba(255,255,255,0.1); }
+            }
+            .animate-profileGlow {
+              animation: profileGlow 5s infinite ease-in-out;
+            }
+          `}
+        </style>
+      </div>
+
+      <EditProfileModal
+        user={user}
+        isOpen={editProfileOpen}
+        onClose={() => setEditProfileOpen(false)}
+        refreshUser={() => {}}
+      />
+    </>
+  );
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+"use client";
+
+import React, { useEffect, useRef, useState, useCallback } from "react";
+import { useRouter } from "next/navigation";
+import EditProfileModal from "@/Profile/EditProfileModal";
+
+import { db } from "@/firebase/firebaseConfig";
+import {
+  doc,
+  getDocs,
+  collection,
+  updateDoc,
+  serverTimestamp,
+  addDoc,
+  deleteDoc,
+} from "firebase/firestore";
+
+import { useAuth } from "@/contextAuth/AuthContext"; // ⭐ Auth Context
+
+// ------------------ TYPES ------------------
+
+type Message = {
+  role: "user" | "ai";
+  text: string;
+};
+
+type Chat = {
+  id: string;
+  title: string;
+  messages: Message[];
+  pinned?: boolean;
+};
+
+// ------------------ CHAT ROW COMPONENT ------------------
+
+const ChatRow = ({
+  chat,
+  activeChatId,
+  setActiveChatId,
+  openChatMenu,
+  setOpenChatMenu,
+  chatMenuRef,
+  togglePin,
+  renameChat,
+  deleteChat,
+}: any) => (
+  <div
+    onClick={() => setActiveChatId(chat.id)}
+    className={`group relative flex justify-between px-3 py-2 rounded-lg text-sm cursor-pointer ${
+      chat.id === activeChatId ? "bg-white/15" : "hover:bg-white/10"
+    }`}
+  >
+    <span className="truncate flex items-center gap-1">
+      {chat.pinned && <span className="text-xs opacity-60">*</span>}
+      <span className="truncate">{chat.title}</span>
+    </span>
+
+    <button
+      onClick={(e) => {
+        e.stopPropagation();
+        setOpenChatMenu(openChatMenu === chat.id ? null : chat.id);
+      }}
+    >
+      ⋯
+    </button>
+
+    {openChatMenu === chat.id && (
+      <div
+        ref={chatMenuRef}
+        onClick={(e) => e.stopPropagation()}
+        className="absolute right-2 top-10 w-40 bg-black/90 border border-white/10 rounded-xl shadow-xl z-50"
+      >
+        <button onClick={() => togglePin(chat.id)} className="w-full px-4 py-2 text-left hover:bg-white/10">
+          {chat.pinned ? "Unpin" : "Pin"}
+        </button>
+
+        <button onClick={() => renameChat(chat.id)} className="w-full px-4 py-2 text-left hover:bg-white/10">
+          Rename
+        </button>
+
+        <button onClick={() => deleteChat(chat.id)} className="w-full px-4 py-2 text-left hover:bg-white/10 text-red-400">
+          Delete
+        </button>
+      </div>
+    )}
+  </div>
+);
+
+const MemoChatRow = React.memo(ChatRow);
+
+const MenuItem = ({ label, highlight }: { label: string; highlight?: boolean }) => (
+  <button
+    className={`w-full px-4 py-3 text-left rounded-lg text-sm transition hover:bg-white/10 ${
+      highlight ? "text-yellow-300" : ""
+    }`}
+  >
+    {label}
+  </button>
+);
+
+const MemoMenuItem = React.memo(MenuItem);
+
+// ------------------ MAIN PAGE ------------------
+
+export default function ChatPage() {
+  const router = useRouter();
+  const { user, logout } = useAuth();
+
+  const [editProfileOpen, setEditProfileOpen] = useState(false);
+  const [chats, setChats] = useState<Chat[]>([]);
+  const [activeChatId, setActiveChatId] = useState<string | null>(null);
+  const [input, setInput] = useState("");
+  const [isTyping, setIsTyping] = useState(false);
+
+  const botTimeout = useRef<any>(null);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [openChatMenu, setOpenChatMenu] = useState<string | null>(null);
+
+  const profileRef = useRef<HTMLDivElement>(null);
+  const chatMenuRef = useRef<HTMLDivElement>(null);
+  const [profileOpen, setProfileOpen] = useState(false);
+
+  // ------------------ CLOSE POPUPS WHEN CLICK OUTSIDE ------------------
+
+  useEffect(() => {
+    const handleClick = (event: MouseEvent) => {
+      if (profileRef.current && !profileRef.current.contains(event.target as Node)) {
+        setProfileOpen(false);
+      }
+
+      if (chatMenuRef.current && !chatMenuRef.current.contains(event.target as Node)) {
+        setOpenChatMenu(null);
+      }
+    };
+
+    document.addEventListener("mousedown", handleClick);
+
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
+
+  // ------------------ AUTH REDIRECT FIX ------------------
+
+  useEffect(() => {
+    if (user === null) {
+      router.push("/login");
+    }
+  }, [user, router]);
+
+  // ------------------ LOAD CHATS ------------------
+
+  useEffect(() => {
+    if (user) loadChats(user.uid);
+  }, [user]);
+
+  const loadChats = async (uid: string) => {
+    const snap = await getDocs(collection(db, "users", uid, "chats"));
+    const fetched: Chat[] = [];
+
+    snap.forEach((docSnapshot) => {
+      fetched.push({
+        id: docSnapshot.id,
+        ...(docSnapshot.data() as any),
+      });
+    });
+
+    setChats(fetched.sort((a, b) => (a.pinned === b.pinned ? 0 : a.pinned ? -1 : 1)));
+
+    if (fetched.length > 0) setActiveChatId(fetched[0].id);
+  };
+
+  // ------------------ NEW CHAT (NOT SAVED UNTIL MESSAGE) ------------------
+
+  const newChat = useCallback(() => {
+    const hasEmpty = chats.some(c => c.messages.length === 0);
+
+    if (hasEmpty) return; // prevents multiple blank chats
+
+    const tempId = "temp-" + Date.now();
+
+    setChats(prev => [
+      { id: tempId, title: "New Chat", messages: [], pinned: false },
+      ...prev,
+    ]);
+
+    setActiveChatId(tempId);
+  }, [chats]);
+
+  // ------------------ SEND MESSAGE ------------------
+
+  const sendMessage = useCallback(
+  async (text: string) => {
+    if (!user || !activeChatId || !text.trim()) return;
+
+    let chat = chats.find((c) => c.id === activeChatId)!;
+    let chatId = activeChatId;
+
+    // ⭐ FIRST MESSAGE — convert TEMP chat to Firestore chat
+    if (chatId.startsWith("temp-")) {
+      const chatRef = await addDoc(collection(db, "users", user.uid, "chats"), {
+        title: text.slice(0, 24),
+        pinned: false,
+        messages: [],
+        updatedAt: serverTimestamp(),
+      });
+
+      chatId = chatRef.id;
+
+      // Update state: turn temp chat into real chat
+      setChats((prev) =>
+        prev.map((c) =>
+          c.id === activeChatId ? { ...c, id: chatId } : c
+        )
+      );
+
+      setActiveChatId(chatId);
+    }
+
+    // Append user message
+    const newMessages = [...chat.messages, { role: "user" as const, text }];
+
+    setChats((prev) =>
+      prev.map((c) => (c.id === chatId ? { ...c, messages: newMessages } : c))
+    );
+
+    await updateDoc(doc(db, "users", user.uid, "chats", chatId), {
+      messages: newMessages,
+      updatedAt: serverTimestamp(),
+    });
+
+    setInput("");
+    setIsTyping(true);
+
+    // Bot simulated response
+    botTimeout.current = setTimeout(async () => {
+      const botMsg = { role: "ai" as const, text: "This is a placeholder response." };
+      const final = [...newMessages, botMsg];
+
+      setChats((prev) =>
+        prev.map((c) => (c.id === chatId ? { ...c, messages: final } : c))
+      );
+
+      await updateDoc(doc(db, "users", user.uid, "chats", chatId), {
+        messages: final,
+        updatedAt: serverTimestamp(),
+      });
+
+      setIsTyping(false);
+    }, 1200);
+  },
+  [user, activeChatId, chats]
+);
+
+// ------------------ STOP BOT ------------------
+
+const stopBot = () => {
+  if (botTimeout.current) clearTimeout(botTimeout.current);
+  setIsTyping(false);
+};
+
+  // ------------------ PIN ------------------
+
+  const togglePin = useCallback(
+    async (id: string) => {
+      if (!user) return;
+
+      const chat = chats.find((c) => c.id === id);
+      if (!chat) return;
+
+      if (!chat.pinned && chats.filter((c) => c.pinned).length >= 3) {
+        alert("You can pin only 3 chats.");
+        return;
+      }
+
+      await updateDoc(doc(db, "users", user.uid, "chats", id), {
+        pinned: !chat.pinned,
+      });
+
+      setChats(prev =>
+        prev.map((c) => (c.id === id ? { ...c, pinned: !chat.pinned } : c))
+      );
+
+      setOpenChatMenu(null);
+    },
+    [user, chats]
+  );
+
+  // ------------------ RENAME ------------------
+
+  const renameChat = useCallback(
+    async (id: string) => {
+      if (!user) return;
+      const name = prompt("Rename chat");
+      if (!name) return;
+
+      await updateDoc(doc(db, "users", user.uid, "chats", id), {
+        title: name,
+        updatedAt: serverTimestamp(),
+      });
+
+      setChats(prev => prev.map((c) => (c.id === id ? { ...c, title: name } : c)));
+      setOpenChatMenu(null);
+    },
+    [user]
+  );
+
+  // ------------------ DELETE ------------------
+
+  const deleteChat = useCallback(
+    async (id: string) => {
+      if (!user) return;
+
+      const updated = chats.filter((c) => c.id !== id);
+      setChats(updated);
+
+      if (!id.startsWith("temp-")) {
+        await deleteDoc(doc(db, "users", user.uid, "chats", id));
+      }
+
+      if (activeChatId === id && updated.length > 0) setActiveChatId(updated[0].id);
+
+      if (updated.length === 0) setActiveChatId(null);
+
+      setOpenChatMenu(null);
+    },
+    [user, chats, activeChatId]
+  );
+
+  // ------------------ LOGOUT ------------------
+
+  const handleLogout = async () => {
+    await logout();
+    router.push("/");
+  };
+
+  // ------------------ WAIT FOR USER ------------------
+
+  if (user === undefined) return null;
+  if (!user) return null;
+
+  const pinnedChats = chats.filter((c) => c.pinned);
+  const normalChats = chats.filter((c) => !c.pinned);
+
+  // ------------------ JSX RETURN ------------------
+
+ return (
+  <>    
+    <EditProfileModal
+      user={user}
+      isOpen={editProfileOpen}
+      onClose={() => setEditProfileOpen(false)}
+      refreshUser={() => {}}
+    />
+      <div className="relative flex h-screen bg-gradient-to-br from-gray-950 via-black to-gray-900 text-white">
+
+
+        {/* Header */}
+        <main className="flex-1 flex flex-col">
+          <div className="flex items-center gap-3 p-4 border-b border-white/10">
+            {!sidebarOpen && (
+              <button onClick={() => setSidebarOpen(true)} className="px-3 py-2 rounded-lg bg-white/10">
+                ☰
+              </button>
+            )}
+            <h1 className="font-semibold text-lg">AI Videxa</h1>
+
+            {isTyping && (
+              <button
+                onClick={stopBot}
+                className="ml-auto bg-red-500/80 hover:bg-red-600 text-white px-4 py-2 rounded-lg text-sm"
+              >
+                Stop generating
+              </button>
+            )}
+          </div>
+
+          {/* Messages */}
+          <div className="flex-1 overflow-y-auto px-6 py-8">
+            <div className="max-w-3xl mx-auto space-y-5">
+              {activeChatId &&
+                chats.find((c) => c.id === activeChatId)?.messages.map((msg, i) => (
+                  <div
+                    key={i}
+                    className={`max-w-[80%] px-5 py-3 rounded-2xl text-sm ${
+                      msg.role === "user" ? "ml-auto bg-white text-black" : "bg-white/10"
+                    }`}
+                  >
+                    {msg.text}
+                  </div>
+                ))}
+
+              {isTyping && <div className="bg-white/10 px-5 py-3 rounded-2xl animate-pulse w-fit">Thinking…</div>}
+            </div>
+          </div>
+
+          {/* Input */}
+          <div className="border-t border-white/10 p-4">
+            <div className="max-w-3xl mx-auto flex gap-3">
+              <input
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && input.trim() && sendMessage(input)}
+                placeholder="Message AI Videxa..."
+                className="flex-1 bg-white/10 rounded-2xl px-5 py-3"
+              />
+
+              <button
+                onClick={() => sendMessage(input)}
+                disabled={!input.trim()}
+                className={`px-6 rounded-2xl font-semibold ${
+                  input.trim() ? "bg-white text-black" : "bg-white/30 text-black/40 cursor-not-allowed"
+                }`}
+              >
+                Send
+              </button>
+            </div>
+          </div>
+        </main>
+
+        {/* Sidebar */}
+        <aside
+          className={`absolute right-0 top-0 h-full w-64 transition-all duration-300 ease-in-out
+            bg-white/5 backdrop-blur-xl border-l border-white/10 flex flex-col ${
+              sidebarOpen ? "translate-x-0 opacity-100" : "translate-x-full opacity-0"
+            }`}
+        >
+          <div className="flex justify-between px-4 py-4 border-b border-white/10">
+            <span className="font-semibold">Chats</span>
+            <button onClick={() => setSidebarOpen(false)}>✕</button>
+          </div>
+
+          <div className="px-4 py-3">
+            <button onClick={newChat} className="w-full bg-white text-black py-2 rounded-xl font-semibold">
+              + New Chat
+            </button>
+          </div>
+
+          <div className="flex-1 overflow-y-auto px-2 space-y-4">
+            {pinnedChats.length > 0 && (
+              <div>
+                <p className="px-3 text-xs uppercase tracking-wider text-gray-400">Pinned</p>
+
+                {pinnedChats.map((chat) => (
+                  <MemoChatRow
+                    key={chat.id}
+                    chat={chat}
+                    activeChatId={activeChatId}
+                    setActiveChatId={setActiveChatId}
+                    openChatMenu={openChatMenu}
+                    setOpenChatMenu={setOpenChatMenu}
+                    chatMenuRef={chatMenuRef}
+                    togglePin={togglePin}
+                    renameChat={renameChat}
+                    deleteChat={deleteChat}
+                  />
+                ))}
+              </div>
+            )}
+
+            {normalChats.map((chat) => (
+              <MemoChatRow
+                key={chat.id}
+                chat={chat}
+                activeChatId={activeChatId}
+                setActiveChatId={setActiveChatId}
+                openChatMenu={openChatMenu}
+                setOpenChatMenu={setOpenChatMenu}
+                chatMenuRef={chatMenuRef}
+                togglePin={togglePin}
+                renameChat={renameChat}
+                deleteChat={deleteChat}
+              />
+            ))}
+          </div>
+
+          {/* Profile */}
+          <div ref={profileRef} className="border-t border-white/10 p-3 relative">
+            <div onClick={() => setProfileOpen(!profileOpen)} className="flex gap-3 p-2 rounded-xl hover:bg-white/10 cursor-pointer">
+              <div className="w-9 h-9 rounded-full overflow-hidden border border-white/20 flex items-center justify-center bg-gradient-to-br from-purple-500 to-pink-500">
+                {user?.photoURL ? (
+                  <img src={user.photoURL} className="w-full h-full object-cover rounded-full" />
+                ) : (
+                  <span className="font-bold uppercase">{user?.displayName?.[0] || "U"}</span>
+                )}
+              </div>
+
+              <div>
+                <p className="text-sm font-medium">{user?.displayName || "User"}</p>
+                <p className="text-xs text-gray-400">Free Plan</p>
+              </div>
+            </div>
+
+            {profileOpen && (
+              <div className="absolute bottom-16 left-3 w-60 rounded-2xl backdrop-blur-xl bg-gradient-to-br from-gray-800 via-black to-gray-900 border border-white/10 shadow-2xl p-4 animate-profileGlow">
+                <div className="pb-2 mb-2 border-b border-white/10">
+                  <p className="font-semibold text-lg">{user?.displayName || "User"}</p>
+                </div>
+
+                <MemoMenuItem label="Settings" />
+                <MemoMenuItem label="Help & Support" />
+
+                <button
+                  onClick={() => {
+                    setProfileOpen(false);
+                    setEditProfileOpen(true);
+                  }}
+                  className="w-full text-left px-4 py-3 hover:bg-white/10 rounded-lg"
+                >
+                  Edit Profile
+                </button>
+
+                <MemoMenuItem label="Upgrade Plan" highlight />
+
+                <div className="h-px bg-white/10 my-2"></div>
+
+                <button
+                  onClick={handleLogout}
+                  className="w-full text-left px-4 py-3 text-red-400 hover:bg-red-500/10 rounded-lg transition"
+                >
+                  Logout
+                </button>
+              </div>
+            )}
+          </div>
+        </aside>
+
+        <style>
+          {`
+            @keyframes profileGlow {
+              0% { box-shadow: 0 0 10px rgba(255,255,255,0.1); }
+              50% { box-shadow: 0 0 25px rgba(255,255,255,0.25); }
+              100% { box-shadow: 0 0 10px rgba(255,255,255,0.1); }
+            }
+            .animate-profileGlow {
+              animation: profileGlow 5s infinite ease-in-out;
+            }
+          `}
+                </style>
+      </div>
+    </>
+  );
+}
+
+
+
+
+
+
+chgat page 
+"use client";
+
+import React, { useEffect, useRef, useState, useCallback } from "react";
+import { useRouter } from "next/navigation";
+import EditProfileModal from "@/Profile/EditProfileModal";
+
+import { db } from "@/firebase/firebaseConfig";
+import {
+  doc,
+  getDocs,
+  collection,
+  updateDoc,
+  serverTimestamp,
+  addDoc,
+  deleteDoc,
+} from "firebase/firestore";
+
+import { useAuth } from "@/contextAuth/AuthContext";
+
+type Message = {
+  role: "user" | "ai";
+  text: string;
+};
+
+type Chat = {
+  id: string;
+  title: string;
+  messages: Message[];
+  pinned?: boolean;
+};
+
+const ChatRow = ({
+  chat,
+  activeChatId,
+  setActiveChatId,
+  openChatMenu,
+  setOpenChatMenu,
+  chatMenuRef,
+  togglePin,
+  renameChat,
+  deleteChat,
+}: any) => (
+  <div
+  onClick={() => setActiveChatId(chat.id)}
+  className={`group relative flex justify-between px-3 py-2 rounded-lg text-sm cursor-pointer ${
+    chat.id === activeChatId
+      ? "bg-gradient-to-r from-purple-600/30 to-pink-600/20 shadow-lg"
+      : "hover:bg-white/10"
+  }`}
+>
+  <span className="truncate flex items-center gap-1">
+    {chat.pinned && <span className="text-xs opacity-60">★</span>}
+    <span className="truncate">{chat.title}</span>
+  </span>
+
+  {chat.id !== "new-chat" && (
+    <button
+      onClick={(e) => {
+        e.stopPropagation();
+        setOpenChatMenu(openChatMenu === chat.id ? null : chat.id);
+      }}
+    >
+      ⋯
+    </button>
+  )}
+
+  {openChatMenu === chat.id && (
+    <div
+      ref={chatMenuRef}
+      onClick={(e) => e.stopPropagation()}
+      className="absolute right-2 top-10 w-40 bg-black border border-white/10 rounded-xl shadow-xl z-50"
+    >
+      <button onClick={() => togglePin(chat.id)} className="w-full px-4 py-2 text-left hover:bg-white/10">
+        {chat.pinned ? "Unpin" : "Pin"}
+      </button>
+
+      <button onClick={() => renameChat(chat.id)} className="w-full px-4 py-2 text-left hover:bg-white/10">
+        Rename
+      </button>
+
+      <button onClick={() => deleteChat(chat.id)} className="w-full px-4 py-2 text-left hover:bg-white/10 text-red-400">
+        Delete
+      </button>
+    </div>
+  )}
+</div>
+);
+
+
+const MemoChatRow = React.memo(ChatRow);
+
+export default function ChatPage() {
+  const router = useRouter();
+  const { user, logout } = useAuth();
+
+  const [editProfileOpen, setEditProfileOpen] = useState(false);
+
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+
+  const [chats, setChats] = useState<Chat[]>([]);
+  const [activeChatId, setActiveChatId] = useState<string | null>(null);
+
+  const [input, setInput] = useState("");
+  const [isTyping, setIsTyping] = useState(false);
+
+  const botTimeout = useRef<any>(null);
+
+  const [openChatMenu, setOpenChatMenu] = useState<string | null>(null);
+  const [profileOpen, setProfileOpen] = useState(false);
+
+  const chatMenuRef = useRef<HTMLDivElement>(null);
+  const profileRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClick = (event: MouseEvent) => {
+      if (profileRef.current && !profileRef.current.contains(event.target as Node))
+        setProfileOpen(false);
+
+      if (chatMenuRef.current && !chatMenuRef.current.contains(event.target as Node))
+        setOpenChatMenu(null);
+    };
+
+    document.addEventListener("mousedown", handleClick);
+
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
+
+  useEffect(() => {
+    if (user === null) router.push("/login");
+  }, [user, router]);
+
+  useEffect(() => {
+    if (user) loadChats(user.uid);
+  }, [user]);
+
+  const loadChats = async (uid: string) => {
+    const snap = await getDocs(collection(db, "users", uid, "chats"));
+    const fetched: Chat[] = [];
+
+    snap.forEach((docSnapshot) => {
+      fetched.push({
+        id: docSnapshot.id,
+        ...(docSnapshot.data() as any),
+      });
+    });
+
+    setChats(fetched.sort((a, b) => (a.pinned === b.pinned ? 0 : a.pinned ? -1 : 1)));
+
+    if (fetched.length > 0) setActiveChatId(fetched[0].id);
+  };
+
+ const newChat = useCallback(() => {
+  setActiveChatId("new-chat");
+}, []);
+
+
+  const sendMessage = useCallback(
+    async (text: string) => {
+      if (!user || !activeChatId || !text.trim()) return;
+
+      let chat = chats.find((c) => c.id === activeChatId)!;
+      let chatId = activeChatId;
+
+      if (chatId === "new-chat") {
+        const chatRef = await addDoc(collection(db, "users", user.uid, "chats"), {
+          title: text.slice(0, 24),
+          pinned: false,
+          messages: [],
+          updatedAt: serverTimestamp(),
+        });
+
+        chatId = chatRef.id;
+
+  setChats((prev) => [
+    { id: chatId, title: text.slice(0, 24), messages: [], pinned: false },
+    ...prev,
+  ]);
+
+  setActiveChatId(chatId);
+      }
+
+      const newMessages = [...chat.messages, { role: "user" as const, text }];
+
+
+      setChats((prev) =>
+        prev.map((c) => (c.id === chatId ? { ...c, messages: newMessages } : c))
+      );
+
+      await updateDoc(doc(db, "users", user.uid, "chats", chatId), {
+        messages: newMessages,
+        updatedAt: serverTimestamp(),
+      });
+
+      setInput("");
+      setIsTyping(true);
+
+      botTimeout.current = setTimeout(async () => {
+        const botMsg = { role: "ai" as const, text: "This is a placeholder response." };
+
+        const final = [...newMessages, botMsg];
+
+        setChats((prev) =>
+          prev.map((c) => (c.id === chatId ? { ...c, messages: final } : c))
+        );
+
+        await updateDoc(doc(db, "users", user.uid, "chats", chatId), {
+          messages: final,
+          updatedAt: serverTimestamp(),
+        });
+
+        setIsTyping(false);
+      }, 1200);
+    },
+    [user, activeChatId, chats]
+  );
+
+  const stopBot = () => {
+    if (botTimeout.current) clearTimeout(botTimeout.current);
+    setIsTyping(false);
+  };
+
+  const togglePin = async (id: string) => {
+    if (!user) return;
+
+    const chat = chats.find((c) => c.id === id);
+    if (!chat) return;
+
+    const countPinned = chats.filter((c) => c.pinned).length;
+
+    if (!chat.pinned && countPinned >= 3) {
+      alert("You can pin only 3 chats.");
+      return;
+    }
+
+    await updateDoc(doc(db, "users", user.uid, "chats", id), {
+      pinned: !chat.pinned,
+    });
+
+    setChats((prev) =>
+      prev.map((c) => (c.id === id ? { ...c, pinned: !chat.pinned } : c))
+    );
+
+    setOpenChatMenu(null);
+  };
+
+  const renameChat = async (id: string) => {
+    if (!user) return;
+
+    const name = prompt("Rename chat");
+    if (!name) return;
+
+    await updateDoc(doc(db, "users", user.uid, "chats", id), {
+      title: name,
+      updatedAt: serverTimestamp(),
+    });
+
+    setChats((prev) => prev.map((c) => (c.id === id ? { ...c, title: name } : c)));
+    setOpenChatMenu(null);
+  };
+
+  const deleteChat = async (id: string) => {
+    if (!user) return;
+
+    const updated = chats.filter((c) => c.id !== id);
+    setChats(updated);
+
+    if (!id.startsWith("temp-")) {
+      await deleteDoc(doc(db, "users", user.uid, "chats", id));
+    }
+
+    if (activeChatId === id && updated.length > 0) setActiveChatId(updated[0].id);
+
+    if (updated.length === 0) setActiveChatId(null);
+
+    setOpenChatMenu(null);
+  };
+
+  const handleLogout = async () => {
+    await logout();
+    router.push("/");
+  };
+
+  const pinned = chats.filter((c) => c.pinned);
+  const normal = chats.filter((c) => !c.pinned);
+
+ return (
+  <>
+    {editProfileOpen && (
+      <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999]">
+        <div className="bg-[#111] w-full max-w-lg rounded-2xl p-6 border border-white/10 shadow-xl">
+          <EditProfileModal
+            user={user}
+            isOpen={true}
+            onClose={() => setEditProfileOpen(false)}
+            refreshUser={() => {}}
+          />
+        </div>
+      </div>
+    )}
+
+    <div className="flex h-screen w-screen overflow-hidden bg-[#0E0E0F] text-white">
+
+      {/* MAIN CHAT AREA */}
+      <main className="flex-1 flex flex-col h-full">
+
+        {/* Header */}
+        <div className="flex items-center gap-3 p-4 border-b border-white/10">
+          {!sidebarOpen && (
+            <button onClick={() => setSidebarOpen(true)} className="px-3 py-2 rounded-lg bg-white/10">
+              ☰
+            </button>
+          )}
+
+          <h1 className="font-semibold text-lg">AI Videxa</h1>
+
+          {isTyping && (
+            <button
+              onClick={stopBot}
+              className="ml-auto bg-red-600 text-white px-4 py-2 rounded-lg text-sm"
+            >
+              Stop
+            </button>
+          )}
+        </div>
+
+        {/* MESSAGES */}
+        <div className="flex-1 overflow-y-auto px-6 py-6 custom-scroll">
+          <div className="max-w-3xl mx-auto space-y-4">
+            {activeChatId &&
+              chats
+                .find((c) => c.id === activeChatId)
+                ?.messages.map((msg, i) => (
+                  <div
+                    key={i}
+                    className={`max-w-[80%] px-5 py-3 rounded-2xl text-sm ${
+                      msg.role === "user" ? "ml-auto bg-white text-black" : "bg-white/10"
+                    }`}
+                  >
+                    {msg.text}
+                  </div>
+                ))}
+
+            {isTyping && (
+              <div className="bg-white/10 px-5 py-3 rounded-2xl animate-pulse w-fit">
+                Thinking…
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* INPUT */}
+        <div className="border-t border-white/10 p-4">
+          <div className="max-w-3xl mx-auto flex gap-3">
+            <input
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && input.trim() && sendMessage(input)}
+              placeholder="Message AI Videxa..."
+              className="flex-1 bg-white/10 rounded-2xl px-5 py-3 focus:outline-none"
+            />
+
+            <button
+              onClick={() => sendMessage(input)}
+              disabled={!input.trim()}
+              className={`px-6 rounded-2xl font-semibold ${
+                input.trim()
+                  ? "bg-white text-black"
+                  : "bg-white/20 text-black/40 cursor-not-allowed"
+              }`}
+            >
+              Send
+            </button>
+          </div>
+        </div>
+      </main>
+
+      {/* SIDEBAR */}
+      <aside
+        className={`absolute right-0 top-0 h-full w-64 bg-black/40 backdrop-blur-xl border-l border-white/10 flex flex-col transition-all duration-300 ${
+          sidebarOpen ? "translate-x-0" : "translate-x-full"
+        }`}
+      >
+        <div className="flex justify-between px-4 py-4 border-b border-white/10">
+          <span className="font-semibold">Chats</span>
+          <button onClick={() => setSidebarOpen(false)}>✕</button>
+        </div>
+
+        <div className="px-4 py-3">
+          <button onClick={newChat} className="w-full bg-white text-black py-2 rounded-xl font-semibold">
+            + New Chat
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-2 py-4 space-y-4 custom-scroll">
+          {pinned.length > 0 && (
+            <div>
+              <p className="px-3 text-xs uppercase tracking-wider text-gray-400">Pinned</p>
+
+              {pinned.map((chat) => (
+                <MemoChatRow
+                  key={chat.id}
+                  chat={chat}
+                  activeChatId={activeChatId}
+                  setActiveChatId={setActiveChatId}
+                  openChatMenu={openChatMenu}
+                  setOpenChatMenu={setOpenChatMenu}
+                  chatMenuRef={chatMenuRef}
+                  togglePin={togglePin}
+                  renameChat={renameChat}
+                  deleteChat={deleteChat}
+                />
+              ))}
+            </div>
+          )}
+
+          {normal.map((chat) => (
+            <MemoChatRow
+              key={chat.id}
+              chat={chat}
+              activeChatId={setActiveChatId}
+              setActiveChatId={setActiveChatId}
+              openChatMenu={openChatMenu}
+              setOpenChatMenu={setOpenChatMenu}
+              chatMenuRef={chatMenuRef}
+              togglePin={togglePin}
+              renameChat={renameChat}
+              deleteChat={deleteChat}
+            />
+          ))}
+        </div>
+
+        {/* PROFILE SECTION */}
+        <div ref={profileRef} className="border-t border-white/10 p-4 relative">
+          <div
+            onClick={() => setProfileOpen(!profileOpen)}
+            className="flex gap-3 p-2 rounded-xl hover:bg-white/10 cursor-pointer"
+          >
+            <div className="w-10 h-10 bg-purple-600 rounded-full flex items-center justify-center text-xl">
+              {user?.displayName?.charAt(0)?.toUpperCase() || "U"}
+            </div>
+
+            <div>
+              <p className="text-sm font-medium">{user?.displayName || "User"}</p>
+              <p className="text-xs text-gray-400">Free Plan</p>
+            </div>
+          </div>
+
+          {profileOpen && (
+  <div
+    className="
+      absolute bottom-24 left-3 w-64 
+      rounded-2xl 
+      bg-[#0F0F11]/90
+      border border-white/10 
+      shadow-[0_0_35px_rgba(168,85,247,0.25)]
+      p-4 
+      backdrop-blur-xl 
+      z-50
+      transform origin-bottom-left
+      animate-profilePopup
+    "
+  >
+
+              <div className="flex items-center gap-3 px-3 py-2 border-b border-white/10">
+                <div className="w-11 h-11 rounded-full overflow-hidden border-2 border-purple-500 shadow-[0_0_12px_rgba(168,85,247,0.6)] flex items-center justify-center text-lg font-semibold bg-purple-600/80">
+
+                  {user?.displayName?.charAt(0)?.toUpperCase() || "U"}
+                </div>
+
+                <div className="flex flex-col leading-tight">
+                  <span className="text-sm font-semibold">{user?.displayName || "User"}</span>
+                  <span className="text-[11px] text-gray-400">Free Plan</span>
+                </div>
+              </div>
+
+              <button
+                onClick={() => {
+                  setEditProfileOpen(true);
+                  setProfileOpen(false);
+                }}
+                className="w-full text-left px-4 py-2 hover:bg-white/10 transition-all duration-200 rounded-lg hover:translate-x-1"
+
+              >
+                Edit Profile
+              </button>
+
+              <button className="w-full text-left px-4 py-2 hover:bg-[#252528] rounded-md transition">
+                Settings
+              </button>
+
+              <button className="w-full text-left px-4 py-2 bg-gradient-to-r from-purple-600/20 to-pink-600/20 hover:from-purple-600/30 hover:to-pink-600/30 text-purple-300 rounded-lg mt-1 transition-all duration-200 hover:translate-x-1">
+               Upgrade Plan
+              </button>
+
+
+              <button
+                 onClick={handleLogout}
+                 className="w-full text-left px-4 py-2 hover:bg-red-500/10 text-red-400 rounded-lg transition-all duration-200 hover:translate-x-1"
+>
+                    Logout
+                </button>
+
+            </div>
+          )}
+        </div>
+
+      </aside>
+    </div>
+  </>
+);
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+"use client";
+
+import React, { useState, useEffect } from "react";
+import { createPortal } from "react-dom";
+import { reload } from "firebase/auth"; // ← ADD THIS AT TOP
+
+
+import {
+  setDoc,
+  doc,
+  getDocs,
+  collection,
+  query,
+  where,
+} from "firebase/firestore";
+import { updateProfile } from "firebase/auth";
+import { db, auth } from "@/firebase/firebaseConfig";
+
+interface Props {
+  user: any;
+  isOpen: boolean;
+  onClose: () => void;
+  refreshUser: (updatedUser: any) => void;
+}
+
+
+// IMAGE COMPRESSION
+const compressImage = (file: File, maxWidth = 512, quality = 0.7): Promise<File> => {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.src = URL.createObjectURL(file);
+
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      const scale = maxWidth / img.width;
+      const width = maxWidth;
+      const height = img.height * scale;
+
+      canvas.width = width;
+      canvas.height = height;
+
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return resolve(file);
+
+      ctx.drawImage(img, 0, 0, width, height);
+
+      canvas.toBlob(
+        (blob) => {
+          if (blob) {
+            const compressed = new File([blob], file.name, { type: file.type });
+            resolve(compressed);
+          } else {
+            resolve(file);
+          }
+        },
+        file.type,
+        quality
+      );
+    };
+  });
+};
+
+export default function EditProfileModal({
+  user,
+  isOpen,
+  onClose,
+  refreshUser,
+}: Props) {
+  const [name, setName] = useState(user?.displayName || "");
+  const [username, setUsername] = useState(user?.username || "");
+  const [dob, setDob] = useState(user?.dob || "");
+  const [gender, setGender] = useState(user?.gender || "");
+  const [bio, setBio] = useState(user?.bio || "");
+  const [photo, setPhoto] = useState<File | null>(null);
+
+  const [saving, setSaving] = useState(false);
+
+  const [checking, setChecking] = useState(false);
+  const [usernameValid, setUsernameValid] = useState<boolean | null>(null);
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (isOpen) {
+      setName(user?.displayName || "");
+      setUsername(user?.username || "");
+      setDob(user?.dob || "");
+      setGender(user?.gender || "");
+      setBio(user?.bio || "");
+      setPhoto(null);
+    }
+  }, [isOpen, user]);
+
+  useEffect(() => {
+    if (!username) {
+      setUsernameValid(null);
+      setSuggestions([]);
+      return;
+    }
+
+    const timeout = setTimeout(async () => {
+      setChecking(true);
+
+      const q = query(collection(db, "users"), where("username", "==", username));
+      const snap = await getDocs(q);
+
+      const exists = snap.docs.some((d) => d.id !== user.uid);
+      setUsernameValid(!exists);
+
+      if (exists) {
+        const base = username.toLowerCase();
+        setSuggestions([
+          `${base}${Math.floor(100 + Math.random() * 900)}`,
+          `${base}${Math.floor(1000 + Math.random() * 9000)}`,
+          `${base}${Date.now().toString().slice(-4)}`
+        ]);
+      } else {
+        setSuggestions([]);
+      }
+
+      setChecking(false);
+    }, 400);
+
+    return () => clearTimeout(timeout);
+  }, [username, user?.uid]);
+
+  const autoGenerate = () => {
+    const base = (name || "user").toLowerCase().replace(/[^a-z0-9]/g, "");
+    const rand = Math.floor(100 + Math.random() * 9000);
+    setUsername(`${base}${rand}`);
+  };
+
+  const handleCancel = () => {
+    setName(user?.displayName || "");
+    setUsername(user?.username || "");
+    setDob(user?.dob || "");
+    setGender(user?.gender || "");
+    setBio(user?.bio || "");
+    setPhoto(null);
+    onClose();
+  };
+
+ const handleSave = async () => {
+  if (!user || saving || usernameValid === false) return;
+
+  setSaving(true);
+
+  const finalName = name.trim() || user.displayName || "";
+  let photoURL: string | null = user?.photoURL ?? null;
+
+  if (photo) {
+    const compressed = await compressImage(photo, 512, 0.7);
+
+    const formData = new FormData();
+    formData.append("file", compressed);
+    formData.append("upload_preset", "<YOUR_UPLOAD_PRESET>");
+
+    const cloudinaryRes = await fetch(
+      `https://api.cloudinary.com/v1_1/<YOUR_CLOUD_NAME>/image/upload`,
+      {
+        method: "POST",
+        body: formData,
+      }
+    );
+
+    const data = await cloudinaryRes.json();
+    photoURL = data.secure_url ?? null;
+  }
+
+  await setDoc(
+    doc(db, "users", user.uid),
+    {
+      displayName: finalName,
+      username,
+      dob,
+      gender,
+      bio,
+      photoURL: photoURL ?? null,
+    },
+    { merge: true }
+  );
+
+  await updateProfile(auth.currentUser!, {
+    displayName: finalName,
+    photoURL: photoURL ?? null,
+  });
+
+  // ⭐ FORCE REFRESH FIREBASE AUTH
+  await reload(auth.currentUser!);
+
+  refreshUser({
+    ...user,
+    displayName: finalName,
+    username,
+    dob,
+    gender,
+    bio,
+    photoURL,
+  });
+
+  setSaving(false);
+  onClose();
+};
+
+  const canSave = !saving && !checking && (usernameValid !== false);
+
+  if (!isOpen || typeof window === "undefined") return null;
+
+  return createPortal(
+   <div className="fixed inset-0 z-[9999] flex items-center justify-center">
+  {/* Animated gradient backdrop */}
+  <div className="absolute inset-0 bg-gradient-to-br from-purple-900/40 via-black/70 to-pink-900/40 animate-gradientSlow" />
+  <div className="absolute inset-0 backdrop-blur-xl bg-black/40" />
+
+<div className="absolute -inset-1 rounded-2xl bg-gradient-to-r from-purple-500/30 via-pink-500/20 to-blue-500/30 blur-xl opacity-60 animate-glowPulse pointer-events-none" />
+
+
+<div
+  className="
+    relative
+    w-[500px] max-w-[92%]
+    rounded-2xl
+    p-6
+    border border-white/10
+    bg-gradient-to-br from-[#141625]/90 via-[#0F1B2A]/90 to-[#0B1020]/90
+    backdrop-blur-2xl
+    shadow-[0_0_60px_rgba(168,85,247,0.35)]
+    animate-modalPop
+    overflow-hidden
+  "
+>
+
+        {saving && (
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center rounded-xl z-[1000001]">
+            <div className="w-14 h-14 rounded-full border-4 border-purple-500 border-t-transparent animate-spin"></div>
+          </div>
+        )}
+
+        <h2 className="text-xl text-center font-semibold text-transparent bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text mb-4">
+          Edit Profile
+        </h2>
+
+        {/* AVATAR */}
+        <div className="flex justify-center mb-4">
+          <label className="cursor-pointer block">
+            <input
+              type="file"
+              hidden
+              accept="image/*"
+              onChange={(e) => setPhoto(e.target.files?.[0] || null)}
+            />
+            <div className="avatar-fixed rounded-full overflow-hidden border-2 border-purple-600 shadow-[0_0_20px_rgba(168,85,247,0.5)]">
+              <img
+                src={photo ? URL.createObjectURL(photo) : user?.photoURL || "/default-avatar.png"}
+                className="w-full h-full object-cover"
+              />
+            </div>
+          </label>
+        </div>
+
+        {/* FULL NAME */}
+        <label className="text-xs text-gray-300">Full Name</label>
+        <input value={name} onChange={(e) => setName(e.target.value)} className="premium-input mb-3 interactive" />
+
+        {/* USERNAME */}
+        <label className="text-xs text-gray-300">Username</label>
+        <div className="flex gap-2 mb-1">
+          <input
+            value={username}
+            onChange={(e) => {
+              const sanitized = e.target.value.toLowerCase().replace(/[^a-z0-9]/g, "");
+              setUsername(sanitized);
+            }}
+            className={`flex-1 premium-input interactive ${
+              usernameValid === false
+                ? "ring-red-500 shadow-[0_0_10px_rgba(255,0,0,0.6)]"
+                : usernameValid
+                ? "ring-green-500 shadow-[0_0_10px_rgba(0,255,0,0.4)]"
+                : ""
+            }`}
+          />
+          <button onClick={autoGenerate} className="w-[95px] rounded-lg bg-white/10 hover:bg-white/20 hover:scale-105 transition text-sm">
+            Auto
+          </button>
+        </div>
+
+        {/* FEEDBACK */}
+        <div className="min-h-[42px] text-xs text-gray-200">
+          {checking && <p>Checking…</p>}
+          {!checking && usernameValid === false && (
+            <>
+              <p className="text-red-400 mb-1">Username taken</p>
+              <div className="flex gap-2 flex-wrap">
+                {suggestions.map((s, i) => (
+                  <button key={i} onClick={() => setUsername(s)} className="suggestion-chip">
+                    {s}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+          {!checking && usernameValid === true && username && <p className="text-green-400">Available</p>}
+        </div>
+
+        {/* DOB */}
+        <label className="text-xs text-gray-300">Date of Birth</label>
+        <input type="date" value={dob} onChange={(e) => setDob(e.target.value)} className="premium-input mb-3 interactive" />
+
+        {/* GENDER */}
+        <label className="text-xs text-gray-300">Gender</label>
+        <select value={gender} onChange={(e) => setGender(e.target.value)} className="premium-input text-gray-200 mb-3 interactive">
+          <option value="" className="text-black">Select gender</option>
+          <option value="Male" className="text-black">Male</option>
+          <option value="Female" className="text-black">Female</option>
+          <option value="Other" className="text-black">Other</option>
+        </select>
+
+        {/* BIO */}
+        <label className="text-xs text-gray-300">Bio</label>
+        <textarea value={bio} onChange={(e) => setBio(e.target.value)} className="premium-input h-20 resize-none mb-5 interactive" />
+
+        {/* BUTTONS */}
+        <div className="flex justify-end gap-3">
+          <button onClick={handleCancel} className="premium-cancel">Cancel</button>
+          <button disabled={!canSave} onClick={handleSave} className={`premium-save ${!canSave && "opacity-40 cursor-not-allowed"}`}>
+            Save
+          </button>
+        </div>
+
+        <style>{`
+          .premium-input {
+            width: 100%;
+            background: rgba(255,255,255,0.08);
+            padding: 8px 10px;
+            border-radius: 8px;
+            outline: none;
+            transition: 0.25s;
+          }
+          .interactive:focus {
+            transform: scale(1.05);
+            box-shadow: 0 0 18px rgba(168,85,247,0.75);
+          }
+          .suggestion-chip {
+            background: rgba(255,255,255,0.12);
+            padding: 4px 8px;
+            border-radius: 6px;
+            cursor: pointer;
+          }
+          .premium-save {
+            background: linear-gradient(to right, #a855f7, #ec4899);
+            color: white;
+            padding: 6px 20px;
+            border-radius: 8px;
+          }
+          .premium-cancel {
+            background: rgba(255,255,255,0.08);
+            color: #ddd;
+            padding: 6px 20px;
+            border-radius: 8px;
+          }
+          .avatar-fixed {
+            width: 96px !important;
+            height: 96px !important;
+            min-width: 96px !important;
+            min-height: 96px !important;
+            max-width: 96px !important;
+            max-height: 96px !important;
+          }
+            @keyframes modalPop {
+  0% {
+    opacity: 0;
+    transform: scale(0.9) translateY(20px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes glowPulse {
+  0%, 100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+@keyframes gradientSlow {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+.animate-modalPop {
+  animation: modalPop 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.animate-glowPulse {
+  animation: glowPulse 4s ease-in-out infinite;
+}
+
+.animate-gradientSlow {
+  background-size: 300% 300%;
+  animation: gradientSlow 12s ease infinite;
+}
+
+        `}</style>
+
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+"use client";
+
+import React, { useEffect, useRef, useState, useCallback } from "react";
+import { useRouter } from "next/navigation";
+import EditProfileModal from "@/Profile/EditProfileModal";
+import SettingsModal from "@/app/Settings/SettingsModal";
+import { getDoc } from "firebase/firestore";
+import { Timestamp } from "firebase/firestore";
+import { db } from "@/firebase/firebaseConfig";
+import {
+  doc,
+  getDocs,
+  collection,
+  updateDoc,
+  serverTimestamp,
+  addDoc,
+  deleteDoc,
+  onSnapshot,     
+  query,        // ✅ ADD
+  where,        // ✅ ADD 
+} from "firebase/firestore";
+
+import { useAuth } from "@/contextAuth/AuthContext";
+
+/* ================= TYPES ================= */
+
+
+
+type Message = {
+  role: "user" | "ai";
+  text: string;
+};
+
+type Chat = {
+  id: string;
+  title: string;
+  messages: Message[];
+  pinned?: boolean;
+  updatedAt?: Timestamp; // ✅ ADD THIS
+
+};
+
+/* ================= MULTI TAB CHANNEL ================= */
+const chatChannel =
+  typeof window !== "undefined"
+    ? new BroadcastChannel("acadify-chat-sync")
+    : null;
+
+
+/* ================= CHAT ROW ================= */
+
+const ChatRow = ({
+  chat,
+  activeChatId,
+  setActiveChat,
+  openChatMenu,
+  setOpenChatMenu,
+  chatMenuRef,
+  togglePin,
+  renameChat,
+  deleteChat,
+}: any) => (
+
+  <div
+  onClick={() => setActiveChat(chat.id)}
+
+  className={`group relative flex justify-between px-3 py-2 rounded-lg text-sm cursor-pointer ${
+    chat.id === activeChatId
+      ? "bg-gradient-to-r from-purple-600/30 to-pink-600/20 shadow-lg"
+      : "hover:bg-white/10"
+  }`}
+>
+  <span className="truncate flex items-center gap-1">
+    {chat.pinned && <span className="text-xs opacity-60">★</span>}
+    <span className="truncate">{chat.title}</span>
+  </span>
+
+  {chat.id !== "new-chat" && (
+    <button
+      onClick={(e) => {
+        e.stopPropagation();
+        setOpenChatMenu(openChatMenu === chat.id ? null : chat.id);
+      }}
+    >
+      ⋯
+    </button>
+  )}
+
+  {openChatMenu === chat.id && (
+    <div
+      ref={chatMenuRef}
+      onClick={(e) => e.stopPropagation()}
+      className="absolute right-2 top-10 w-40 bg-black border border-white/10 rounded-xl shadow-xl z-50"
+    >
+      <button onClick={() => togglePin(chat.id)} className="w-full px-4 py-2 text-left hover:bg-white/10">
+        {chat.pinned ? "Unpin" : "Pin"}
+      </button>
+
+      <button onClick={() => renameChat(chat.id)} className="w-full px-4 py-2 text-left hover:bg-white/10">
+        Rename
+      </button>
+
+      <button onClick={() => deleteChat(chat.id)} className="w-full px-4 py-2 text-left hover:bg-white/10 text-red-400">
+        Delete
+      </button>
+    </div>
+  )}
+</div>
+);
+
+
+
+const MemoChatRow = React.memo(ChatRow);
+
+/* ================= MAIN PAGE ================= */
+
+export default function ChatPage() {
+  const [assignmentOpen, setAssignmentOpen] = useState(false);
+
+const [subject, setSubject] = useState("");
+const [topic, setTopic] = useState("");
+const [words, setWords] = useState("1000");
+const [tone, setTone] = useState("Formal");
+
+
+const [researchOpen, setResearchOpen] = useState(false);
+const [pptOpen, setPptOpen] = useState(false);
+
+const [researchTopic, setResearchTopic] = useState("");
+const [researchDepth, setResearchDepth] = useState("basic");
+const [researchSources, setResearchSources] = useState("scholarly");
+
+const [pptTopic, setPptTopic] = useState("");
+const [pptSlides, setPptSlides] = useState("8");
+const [pptTone, setPptTone] = useState("Professional");
+
+const generateResearchPrompt = () => {
+  const prompt = `Research "${researchTopic}". Provide a ${researchDepth} level explanation with ${researchSources} sources. Include intro, analysis, and conclusion with citations.`;
+  setInput(prompt);
+  setResearchOpen(false);
+};
+const generatePptPrompt = () => {
+  const prompt = `Create a ${pptSlides}-slide PPT on "${pptTopic}" in a ${pptTone} style. Include bullet points for each slide: title, intro, key topics, examples, visuals suggestions and conclusion.`;
+  setInput(prompt);
+  setPptOpen(false);
+};
+const generateAssignmentPrompt = () => {
+  const prompt = `Write a ${words} word assignment on "${topic}" related to ${subject} in a ${tone} academic tone. Structure it with introduction, body, and conclusion.`;
+  setInput(prompt);
+  setAssignmentOpen(false);
+
+};
+
+const [settingsOpen, setSettingsOpen] = useState(false);
+
+const [settings, setSettings] = useState({
+  autoScroll: true,
+  enterToSend: true,
+  chatHistory: true,
+});
+
+
+  
+  const { user, logout } = useAuth();
+  const [currentUser, setCurrentUser] = useState<any>(user);
+  
+  const [openingAdvanced, setOpeningAdvanced] = useState(false);
+
+
+  const [assignmentMode, setAssignmentMode] = useState<"basic" | "advanced">("basic");
+
+
+
+  const [editProfileOpen, setEditProfileOpen] = useState(false);
+
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+
+  const [chats, setChats] = useState<Chat[]>([]);
+  const [activeChatId, setActiveChatId] = useState<string | null>(null);
+
+  const [input, setInput] = useState("");
+  const [isTyping, setIsTyping] = useState(false);
+
+  const botTimeout = useRef<any>(null);
+
+  const [openChatMenu, setOpenChatMenu] = useState<string | null>(null);
+  const [profileOpen, setProfileOpen] = useState(false);
+
+  const chatMenuRef = useRef<HTMLDivElement>(null);
+  const profileRef = useRef<HTMLDivElement>(null);
+
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);  
+  const messagesContainerRef = useRef<HTMLDivElement | null>(null);
+  
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  const [previewPrompt, setPreviewPrompt] = useState<string | null>(null);
+
+  /* ================= ACTIVE CHAT HANDLER ================= */
+
+  const setActiveChat = (id: string, broadcast = true) => {
+    setActiveChatId(id);
+
+    if (broadcast && id !== "new-chat") {
+      chatChannel?.postMessage({
+        type: "ACTIVE_CHAT",
+        chatId: id,
+      });
+    }
+  };
+  useEffect(() => {
+  const handler = () => {
+    setChats([]);               // 🔥 clear sidebar immediately
+    setActiveChatId("new-chat");
+  };
+
+  window.addEventListener("chats-cleared", handler);
+  return () => window.removeEventListener("chats-cleared", handler);
+}, []);
+
+useEffect(() => {
+  if (!user) return;
+
+  const last = sessionStorage.getItem("lastChatId");
+  if (last) {
+    setActiveChatId(last);
+  } else {
+    setActiveChatId("new-chat");
+  }
+}, [user]);
+
+
+
+
+
+  /* ================= MULTI TAB LISTENER ================= */
+
+useEffect(() => {
+  if (!chatChannel) return;
+
+  const handler = (event: MessageEvent) => {
+    const data = event.data;
+    if (!data) return;
+
+    if (data.type === "ACTIVE_CHAT") {
+      setActiveChatId(data.chatId);
+    }
+
+    // ❌ DO NOT handle MESSAGE_UPDATE here
+    // Firestore onSnapshot is the single source of truth
+  };
+
+  chatChannel.addEventListener("message", handler);
+  return () => chatChannel.removeEventListener("message", handler);
+}, []);
+
+
+  /* ================= AssignmentMode ================= */
+
+useEffect(() => {
+  if (!assignmentOpen) {
+    setAssignmentMode("basic");
+  }
+}, [assignmentOpen]);
+
+
+
+
+
+  /* ================= SAVE LAST CHAT (SAME TAB) ================= */
+
+useEffect(() => {
+  if (!user) return;
+
+  const q = query(collection(db, "users", user.uid, "chats"));
+
+  const unsub = onSnapshot(q, snap => {
+    const fetched: Chat[] = [];
+    snap.forEach(d => fetched.push({ id: d.id, ...(d.data() as any) }));
+
+    // ✅ CHATGPT STYLE SORT
+    const sorted = fetched.sort((a, b) => {
+      // 1️⃣ pinned first
+      if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
+
+      // 2️⃣ newest updated first
+      const ta = a.updatedAt?.toMillis?.() ?? 0;
+      const tb = b.updatedAt?.toMillis?.() ?? 0;
+      return tb - ta;
+    });
+
+    setChats(sorted);
+
+    // fallback if active chat deleted
+    if (
+      activeChatId &&
+      activeChatId !== "new-chat" &&
+      !sorted.some(c => c.id === activeChatId)
+    ) {
+      setActiveChatId("new-chat");
+    }
+  });
+
+  return () => unsub();
+}, [user, activeChatId]);
+
+
+  useEffect(() => {
+    if (activeChatId) {
+      sessionStorage.setItem("lastChatId", activeChatId);
+    }
+  }, [activeChatId]);
+
+const [isUserNearBottom, setIsUserNearBottom] = useState(true);
+const [showScrollButton, setShowScrollButton] = useState(false);
+
+const activeChat = chats.find(c => c.id === activeChatId);
+
+useEffect(() => {
+  const container = messagesContainerRef.current;
+  if (!container) return;
+
+  const handleScroll = () => {
+    const distance = container.scrollHeight - container.scrollTop - container.clientHeight;
+    const near = distance < 120;
+
+    setIsUserNearBottom(near);
+    setShowScrollButton(!near);
+  };
+
+  container.addEventListener("scroll", handleScroll);
+  return () => container.removeEventListener("scroll", handleScroll);
+}, []);
+
+useEffect(() => {
+  if (isUserNearBottom) {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }
+}, [chats, isTyping]);
+
+useEffect(() => {
+  setIsUserNearBottom(true);
+  setShowScrollButton(false);
+}, [activeChatId]);
+
+useEffect(() => {
+  setCurrentUser(user);
+}, [user]);
+
+
+useEffect(() => {
+  document.documentElement.style.overflow = "hidden";
+  document.body.style.overflow = "hidden";
+
+  return () => {
+    document.documentElement.style.overflow = "";
+    document.body.style.overflow = "";
+  };
+}, []);
+
+useEffect(() => {
+  const pending = sessionStorage.getItem("pendingPrompt");
+  if (pending) {
+    setInput(pending);
+    sessionStorage.removeItem("pendingPrompt");
+  }
+}, []);
+
+
+
+
+
+  useEffect(() => {
+    const handleClick = (event: MouseEvent) => {
+      if (profileRef.current && !profileRef.current.contains(event.target as Node))
+        setProfileOpen(false);
+
+      if (chatMenuRef.current && !chatMenuRef.current.contains(event.target as Node))
+        setOpenChatMenu(null);
+    };
+
+    document.addEventListener("mousedown", handleClick);
+
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
+
+useEffect(() => {
+  const handleResize = () => {
+    if (window.innerWidth < 1024) {
+      setSidebarOpen(false); // mobile / tablet
+    } else {
+      setSidebarOpen(true);  // desktop
+    }
+  };
+
+  // run once on mount
+  handleResize();
+
+  window.addEventListener("resize", handleResize);
+  return () => window.removeEventListener("resize", handleResize);
+}, []);
+
+
+
+
+  useEffect(() => {
+    if (user === null) router.push("/login");
+  }, [user, router]);
+
+  
+
+  useEffect(() => {
+  if (!textareaRef.current) return;
+
+  if (input === "") {
+    textareaRef.current.style.height = "auto";
+  }
+}, [input]);
+
+
+
+
+const isBlockingModalOpen =
+  settingsOpen ||
+  editProfileOpen ||
+  assignmentOpen ||
+  researchOpen ||
+  pptOpen;
+
+
+/* ================= delete chat from setting (SAME TAB) ================= */
+
+useEffect(() => {
+  if (!user) return;
+
+  const userRef = doc(db, "users", user.uid);
+
+  const unsub = onSnapshot(userRef, async snap => {
+    if (!snap.exists()) return;
+
+    const settings = snap.data().settings;
+    if (!settings) return;
+
+    const chatsRef = collection(db, "users", user.uid, "chats");
+    const chatsSnap = await getDocs(chatsRef);
+
+    // 🔥 DELETE ALL (except pinned)
+    if (settings.clearChatsAt) {
+  await Promise.all(
+    chatsSnap.docs
+      .filter(d => !d.data().pinned)
+      .map(d => deleteDoc(d.ref))
+  );
+
+  await updateDoc(userRef, {
+    "settings.clearChatsAt": null,
+  });
+
+  // ✅ ONLY reset active chat
+  setActiveChatId("new-chat");
+  sessionStorage.removeItem("lastChatId");
+}
+
+
+    // 🔥 DELETE OLDER THAN 30 DAYS
+    if (settings.deleteOlderThanDays && settings.deleteTriggeredAt) {
+      const cutoff =
+        Date.now() - settings.deleteOlderThanDays * 86400000;
+
+      await Promise.all(
+        chatsSnap.docs
+          .filter(d => {
+            const t = d.data().updatedAt?.toMillis?.();
+            return !d.data().pinned && t && t < cutoff;
+          })
+          .map(d => deleteDoc(d.ref))
+      );
+
+      await updateDoc(userRef, {
+        "settings.deleteTriggeredAt": null,
+      });
+    }
+  });
+
+  return () => unsub();
+}, [user]);
+
+   
+  /* ================= NEW CHAT ================= */
+
+ const newChat = useCallback(() => {
+  setActiveChat("new-chat", false); // do NOT broadcast new chat
+}, []);
+
+
+/* ================= SEND MESSAGE ================= */
+
+
+const sendMessage = useCallback(
+  async (text: string) => {
+    if (!user || !activeChatId || !text.trim()) return;
+
+    if (!settings.chatHistory && activeChatId === "new-chat") {
+    alert("Chat history is disabled. Enable it in Settings to start a new chat.");
+    return;
+}
+    // 🚫 BLOCK while AI is generating
+    if (isTyping) return;
+
+    let chatId = activeChatId;
+    const chat = chats.find((c) => c.id === chatId);
+
+    if (chatId === "new-chat") {
+      const chatRef = await addDoc(collection(db, "users", user.uid, "chats"), {
+        title: text.slice(0, 24),
+        pinned: false,
+        messages: [],
+        updatedAt: serverTimestamp(),
+      });
+
+      chatId = chatRef.id;
+
+
+      setActiveChat(chatId);
+    }
+
+    const previousMessages = chat?.messages ?? [];
+    const newMessages = [...previousMessages, { role: "user" as const, text }];
+
+    
+    // 🚫 Do not save if chat history is OFF
+if (!settings.chatHistory) {
+  setInput("");
+  setIsTyping(false);
+  return;
+}
+
+    await updateDoc(doc(db, "users", user.uid, "chats", chatId), {
+      messages: newMessages,
+      updatedAt: serverTimestamp(),
+    });
+
+
+
+    setInput("");
+    // 🔥 RESET textarea height like ChatGPT
+requestAnimationFrame(() => {
+  if (textareaRef.current) {
+    textareaRef.current.style.height = "auto";
+  }
+});
+    setIsTyping(true);
+
+    botTimeout.current = setTimeout(async () => {
+      const botMsg = {
+        role: "ai" as const,
+        text: "This is a placeholder response.",
+      };
+
+      const final = [...newMessages, botMsg];
+
+      await updateDoc(doc(db, "users", user.uid, "chats", chatId), {
+        messages: final,
+        updatedAt: serverTimestamp(),
+      });
+
+      setIsTyping(false);
+    }, 1200);
+  }, [
+  user,
+  activeChatId,
+  chats,
+  isTyping,
+  settings.chatHistory,
+  setActiveChat
+]);
+
+
+const stopBot = () => {
+  if (botTimeout.current) {
+    clearTimeout(botTimeout.current);
+    botTimeout.current = null;
+  }
+  setIsTyping(false);
+};
+
+
+  const togglePin = async (id: string) => {
+    if (!user) return;
+
+    const chat = chats.find((c) => c.id === id);
+    if (!chat) return;
+
+    const countPinned = chats.filter((c) => c.pinned).length;
+
+    if (!chat.pinned && countPinned >= 3) {
+      alert("You can pin only 3 chats.");
+      return;
+    }
+
+    await updateDoc(doc(db, "users", user.uid, "chats", id), {
+      pinned: !chat.pinned,
+    });
+
+
+    setOpenChatMenu(null);
+  };
+
+  const renameChat = async (id: string) => {
+    if (!user) return;
+
+    const name = prompt("Rename chat");
+    if (!name) return;
+
+    await updateDoc(doc(db, "users", user.uid, "chats", id), {
+      title: name,
+      updatedAt: serverTimestamp(),
+    });
+
+    
+  };
+
+  
+
+const deleteChat = async (id: string) => {
+  if (!user) return;
+
+  await deleteDoc(doc(db, "users", user.uid, "chats", id));
+
+  if (activeChatId === id) {
+    setActiveChatId("new-chat");
+  }
+
+  setOpenChatMenu(null);
+};
+
+const deleteAllChats = async () => {
+  if (!user) return;
+
+  const q = query(collection(db, "users", user.uid, "chats"));
+  const snap = await getDocs(q);
+
+  await Promise.all(
+    snap.docs.map(d =>
+      deleteDoc(doc(db, "users", user.uid, "chats", d.id))
+    )
+  );
+
+  // 🔥 HARD RESET
+  setChats([]);
+  setActiveChatId("new-chat");
+  sessionStorage.removeItem("lastChatId");
+
+  // notify same tab listeners
+  window.dispatchEvent(new Event("chats-cleared"));
+};
+
+
+  const handleLogout = async () => {
+  sessionStorage.removeItem("lastChatId");
+  await logout();
+  router.push("/");
+};
+
+
+  const pinned = chats.filter(c => c.pinned === true);
+const normal = chats.filter(c => c.pinned !== true);
+
+  const PROMPTS = {
+  assignment:
+    "Write a 1000 word assignment on Artificial Intelligence in Computer Science with introduction, body, and conclusion.",
+  research:
+    "Research Blockchain Technology. Provide a detailed explanation with scholarly sources, examples, and conclusion.",
+  ppt:
+    "Create a 10-slide PPT on Machine Learning in a professional tone with bullet points for each slide."
+};
+
+
+  return (
+    <>
+      {/* Edit Profile Modal */}
+{editProfileOpen && (
+  <EditProfileModal
+    user={currentUser}
+    isOpen={editProfileOpen}
+    onClose={() => setEditProfileOpen(false)}
+    refreshUser={(updatedUser) => {
+      setCurrentUser(updatedUser);
+    }}
+  />
+)}
+
+{/* ✅ Settings Modal — MOVE HERE */}
+{settingsOpen && (
+  <SettingsModal
+    isOpen={settingsOpen}
+    onClose={() => setSettingsOpen(false)}
+  />
+)}
+
+
+      {/* Assignment Modal */}
+      {assignmentOpen && (
+        <div
+  className={`
+    fixed inset-0 flex items-center justify-center z-[9999]
+    transition-colors duration-300
+    ${openingAdvanced ? "bg-black/80" : "bg-black/60"}
+    backdrop-blur-sm
+  `}
+>
+
+          <div
+  className={`
+    bg-[#111] w-full max-w-lg rounded-2xl p-6
+    border border-white/10 shadow-2xl
+    transform transition-all duration-300 ease-out
+    ${openingAdvanced ? "scale-95 opacity-0" : "scale-100 opacity-100"}
+  `}
+>
+
+            <h2 className="text-xl font-semibold text-transparent bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-center mb-4">
+              Assignment Mode
+            </h2>
+
+            <label className="text-xs text-gray-300">Subject</label>
+            <input
+              value={subject}
+              onChange={(e) => setSubject(e.target.value)}
+              className="w-full mb-3 bg-white/10 rounded-lg px-3 py-2 outline-none"
+              placeholder="Science / Business / Computer Science etc."
+            />
+
+            <label className="text-xs text-gray-300">Topic</label>
+            <input
+              value={topic}
+              onChange={(e) => setTopic(e.target.value)}
+              className="w-full mb-3 bg-white/10 rounded-lg px-3 py-2 outline-none"
+              placeholder="Enter topic"
+            />
+
+            <label className="text-xs text-gray-300">Word Count</label>
+            <select
+              value={words}
+              onChange={(e) => setWords(e.target.value)}
+              className="w-full mb-3 bg-white/10 rounded-lg px-3 py-2 outline-none"
+            >
+              <option value="500">500 words</option>
+              <option value="800">800 words</option>
+              <option value="1000">1000 words</option>
+              <option value="1500">1500 words</option>
+            </select>
+
+            <label className="text-xs text-gray-300">Tone</label>
+            <select
+              value={tone}
+              onChange={(e) => setTone(e.target.value)}
+              className="w-full mb-5 bg-white/10 rounded-lg px-3 py-2 outline-none"
+            >
+              <option value="Formal">Formal</option>
+              <option value="Informal">Informal</option>
+              <option value="Persuasive">Persuasive</option>
+              <option value="Descriptive">Descriptive</option>
+            </select>
+
+
+
+            {/* 🔒 ADVANCED ASSIGNMENT SECTION */}
+<div className="mb-4 border-t border-white/10 pt-4">
+
+  <div className="flex items-center justify-between">
+    <div>
+      <p className="text-sm font-medium text-white">
+        Advanced Assignment 🔒
+      </p>
+      <p className="text-[11px] text-gray-400">
+        Marks-based depth, references, plagiarism-safe & submission-ready
+      </p>
+    </div>
+
+   <button
+onClick={() => {
+  setAssignmentMode("advanced");
+}}
+
+  className="
+    text-xs px-3 py-1.5 rounded-lg
+    bg-white/10 hover:bg-white/20
+    transition-all duration-200
+    hover:scale-105
+  "
+>
+  {openingAdvanced ? "Opening Advanced…" : "Try Advanced →"}
+</button>
+
+  </div>
+
+</div>
+
+
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setAssignmentOpen(false)}
+                className="px-5 py-2 rounded-lg bg-white/10 text-gray-200"
+              >
+                Cancel
+              </button>
+
+              <button
+                onClick={generateAssignmentPrompt}
+                disabled={!subject.trim() || !topic.trim()}
+                className="px-5 py-2 rounded-lg bg-gradient-to-r from-purple-600 to-pink-600 text-white disabled:opacity-40"
+              >
+                Generate
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+      {/* RESEARCH MODE MODAL */}
+{researchOpen && (
+  <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999]">
+    <div className="bg-[#111] w-full max-w-lg rounded-2xl p-6 border border-white/10 shadow-2xl animate-[fadeIn_0.2s_ease]">
+
+      <h2 className="text-xl font-semibold text-transparent bg-gradient-to-r from-blue-400 to-cyan-400 bg-clip-text text-center mb-4">
+        Research Mode
+      </h2>
+
+      <label className="text-xs text-gray-300">Topic</label>
+      <input
+        value={researchTopic}
+        onChange={(e) => setResearchTopic(e.target.value)}
+        placeholder="Enter any research topic"
+        className="w-full mb-3 bg-white/10 rounded-lg px-3 py-2 outline-none"
+      />
+
+      <label className="text-xs text-gray-300">Depth</label>
+      <select
+        value={researchDepth}
+        onChange={(e) => setResearchDepth(e.target.value)}
+        className="w-full mb-3 bg-white/10 rounded-lg px-3 py-2 outline-none"
+      >
+        <option value="basic">Basic Overview</option>
+        <option value="detailed">Detailed Analysis</option>
+        <option value="expert">Expert Level</option>
+      </select>
+
+      <label className="text-xs text-gray-300">Sources Type</label>
+      <select
+        value={researchSources}
+        onChange={(e) => setResearchSources(e.target.value)}
+        className="w-full mb-5 bg-white/10 rounded-lg px-3 py-2 outline-none"
+      >
+        <option value="scholarly">Scholarly</option>
+        <option value="news">News Articles</option>
+        <option value="mixed">Mixed Sources</option>
+      </select>
+
+      <div className="flex justify-end gap-3">
+        <button
+          onClick={() => setResearchOpen(false)}
+          className="px-5 py-2 rounded-lg bg-white/10 text-gray-200"
+        >Cancel</button>
+
+        <button
+          onClick={generateResearchPrompt}
+          disabled={!researchTopic.trim()}
+          className="px-5 py-2 rounded-lg bg-gradient-to-r from-blue-600 to-cyan-500 text-white disabled:opacity-40"
+        >
+          Generate
+        </button>
+      </div>
+
+    </div>
+  </div>
+)}
+{/* PPT MODE MODAL */}
+{pptOpen && (
+  <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999]">
+    <div className="bg-[#111] w-full max-w-lg rounded-2xl p-6 border border-white/10 shadow-2xl animate-[fadeIn_0.2s_ease]">
+
+      <h2 className="text-xl font-semibold text-transparent bg-gradient-to-r from-yellow-400 to-orange-400 bg-clip-text text-center mb-4">
+        PPT Mode
+      </h2>
+
+      <label className="text-xs text-gray-300">Topic</label>
+      <input
+        value={pptTopic}
+        onChange={(e) => setPptTopic(e.target.value)}
+        placeholder="Enter topic for PPT"
+        className="w-full mb-3 bg-white/10 rounded-lg px-3 py-2 outline-none"
+      />
+
+      <label className="text-xs text-gray-300">Slides Count</label>
+      <select
+        value={pptSlides}
+        onChange={(e) => setPptSlides(e.target.value)}
+        className="w-full mb-3 bg-white/10 rounded-lg px-3 py-2 outline-none"
+      >
+        <option value="6">6 Slides</option>
+        <option value="8">8 Slides</option>
+        <option value="10">10 Slides</option>
+        <option value="15">15 Slides</option>
+      </select>
+
+      <label className="text-xs text-gray-300">Tone</label>
+      <select
+        value={pptTone}
+        onChange={(e) => setPptTone(e.target.value)}
+        className="w-full mb-5 bg-white/10 rounded-lg px-3 py-2 outline-none"
+      >
+        <option value="Professional">Professional</option>
+        <option value="Creative">Creative</option>
+        <option value="Minimal">Minimal</option>
+      </select>
+
+      <div className="flex justify-end gap-3">
+        <button
+          onClick={() => setPptOpen(false)}
+          className="px-5 py-2 rounded-lg bg-white/10 text-gray-200"
+        >Cancel</button>
+
+        <button
+          onClick={generatePptPrompt}
+          disabled={!pptTopic.trim()}
+          className="px-5 py-2 rounded-lg bg-gradient-to-r from-yellow-500 to-orange-500 text-white disabled:opacity-40"
+        >
+          Generate
+        </button>
+      </div>
+
+    </div>
+  </div>
+)}
+
+
+
+
+
+{/* MAIN LAYOUT */}
+<div className="flex h-screen w-full bg-[#0E0E0F] text-white overflow-hidden">
+
+  {/* MAIN CHAT AREA */}
+<main className="relative flex flex-col flex-1 min-h-0 min-w-0">
+
+    {/* Header */}
+    <div className="flex items-center gap-3 px-4 py-4 border-b border-white/10">
+     <button
+  onClick={() => setSidebarOpen(prev => !prev)}
+  className="
+    px-3 py-2 rounded-lg bg-white/10
+    hover:bg-white/20 transition
+  "
+>
+  <span
+    className={`inline-block transition-transform duration-200 ${
+      sidebarOpen ? "rotate-90" : ""
+    }`}
+  >
+    {sidebarOpen ? "✕" : "☰"}
+  </span>
+</button>
+
+
+      
+            <h1 className="font-semibold text-lg cursor-pointer">AI Videxa</h1>
+            
+            {isTyping && (
+              <button
+                onClick={stopBot}
+                className="ml-auto bg-red-600 text-white px-4 py-2 rounded-lg text-sm"
+              >
+                Stop
+              </button>
+            )}
+          </div>
+
+      {/* Messages + Auto Scroll */} 
+<div
+  ref={messagesContainerRef}
+  className="flex-1 min-h-0 overflow-y-scroll px-6 py-6 custom-scroll scrollbar-stable"
+>
+
+  <div className="w-full max-w-3xl mx-auto px-4 space-y-4">
+
+    {/* Welcome Screen */}
+    {(!activeChatId ||
+      activeChatId === "new-chat" ||
+      (chats.find((c) => c.id === activeChatId)?.messages.length ?? 0) === 0
+    ) && (
+<div className="relative flex flex-col items-center justify-center py-24 w-full text-center">
+
+        {/* Sparkle glow */}
+        <div className="absolute animate-pulse opacity-40">
+          <div className="w-48 h-48 bg-purple-500/20 blur-3xl rounded-full"></div>
+          <div className="w-32 h-32 bg-pink-500/20 blur-2xl rounded-full absolute top-10 left-10"></div>
+          <div className="w-24 h-24 bg-blue-500/20 blur-2xl rounded-full absolute -top-5 right-5"></div>
+        </div>
+
+        {/* lowered center */}
+        <div className="translate-y-10 flex flex-col items-center">
+
+          <h2 className="text-4xl font-bold bg-gradient-to-r from-purple-400 via-pink-500 to-purple-400
+          text-transparent bg-clip-text animate-[pulse_2.5s_ease-in-out_infinite]">
+            Welcome to AI Videxa ✨
+          </h2>
+
+          <p className="text-gray-400 text-xs mt-2 mb-8 max-w-sm">
+            Generate Assignments, Research & PPTs with academic precision.
+          </p>
+
+          {/* Inverted Pyramid */}
+          <div className="flex flex-col items-center gap-2">
+            <div className="flex gap-2">
+              
+             <button
+  disabled={isTyping}   // 👈 ADD HERE
+  onMouseEnter={() => setPreviewPrompt(PROMPTS.assignment)}
+  onMouseLeave={() => setPreviewPrompt(null)}
+  onClick={() => setInput(PROMPTS.assignment)}
+  className="px-3 py-2 bg-white/5 border border-white/10 text-xs rounded-lg
+             hover:bg-white/10 transition disabled:opacity-40 disabled:cursor-not-allowed"
+>
+  ✎ Assignment Example
+</button>
+
+            <button
+  disabled={isTyping}
+  onMouseEnter={() => setPreviewPrompt(PROMPTS.research)}
+  onMouseLeave={() => setPreviewPrompt(null)}
+  onClick={() => setInput(PROMPTS.research)}
+  className="px-3 py-2 bg-white/5 border border-white/10 text-xs rounded-lg
+             hover:bg-white/10 transition disabled:opacity-40 disabled:cursor-not-allowed"
+>
+  🔍 Research Example
+</button>
+
+
+            </div>
+
+          <button
+  disabled={isTyping}
+  onMouseEnter={() => setPreviewPrompt(PROMPTS.ppt)}
+  onMouseLeave={() => setPreviewPrompt(null)}
+  onClick={() => setInput(PROMPTS.ppt)}
+  className="px-3 py-2 bg-white/5 border border-white/10 text-xs rounded-lg
+             hover:bg-white/10 transition disabled:opacity-40 disabled:cursor-not-allowed"
+>
+  📊 PPT Example
+</button>
+
+
+          </div>
+
+        </div>
+      </div>
+    )}
+
+    {previewPrompt && (
+  <div
+    className="
+      mt-4 max-w-md text-left
+      bg-[#0F0F11]/90
+      border border-white/10
+      rounded-xl
+      p-4
+      text-xs text-gray-300
+      shadow-xl
+      backdrop-blur
+      animate-fadeIn
+    "
+  >
+    <p className="text-[11px] text-gray-400 mb-1">Preview</p>
+    <p className="leading-relaxed">{previewPrompt}</p>
+  </div>
+)}
+
+
+    {/* Chat Messages */}
+    {activeChatId &&
+      chats.find((c) => c.id === activeChatId)?.messages.map((msg, i) => (
+        <div
+          key={i}
+          className={`max-w-[80%] px-5 py-3 rounded-2xl text-sm whitespace-pre-wrap break-words leading-relaxed
+          ${msg.role === "user" ? "ml-auto bg-white text-black" : "bg-white/10"}`}
+        >
+          {msg.text}
+        </div>
+      ))}
+
+    {isTyping && (
+  <div className="bg-white/10 px-5 py-3 rounded-2xl w-fit flex items-center gap-2">
+    <div className="flex gap-1">
+      <span className="w-2 h-2 bg-white/60 rounded-full animate-bounce"></span>
+      <span className="w-2 h-2 bg-white/60 rounded-full animate-bounce [animation-delay:0.15s]"></span>
+      <span className="w-2 h-2 bg-white/60 rounded-full animate-bounce [animation-delay:0.3s]"></span>
+    </div>
+    <span className="text-xs text-white/70">Typing</span>
+  </div>
+)}
+
+
+    {/* Auto scroll anchor */}
+    <div ref={messagesEndRef} />
+  </div>
+</div>
+
+
+
+{showScrollButton &&
+  activeChatId &&
+  activeChatId !== "new-chat" &&
+  activeChat &&
+  activeChat.messages &&
+  activeChat.messages.length > 0 && (
+    <button
+      onClick={() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+        setIsUserNearBottom(true);
+      }}
+      className="
+        fixed bottom-24 left-1/2 -translate-x-1/2
+        px-5 py-2 rounded-full
+        bg-gradient-to-r from-purple-600 to-pink-500
+        text-white text-sm font-semibold
+        shadow-[0_0_20px_rgba(236,72,153,0.5)]
+        border border-white/10
+        backdrop-blur-lg
+        hover:scale-105 transition-all
+        z-[500]
+      "
+    >
+      ↓ 
+    </button>
+)}
+
+
+      {/* INPUT BAR */}
+<div className="border-t border-white/10 p-3 sm:p-4 w-full">
+  <div className="flex w-full max-w-3xl mx-auto gap-2 sm:gap-3 items-center">
+
+  
+
+    <textarea
+    ref={textareaRef}   // 👈 ADD THIS LINE
+  value={input}
+  disabled={isTyping}
+  placeholder={isTyping ? "AI Videxa is generating..." : "Message AI Videxa..."}
+  onChange={(e) => {
+    setInput(e.target.value);
+
+    const ta = e.target as HTMLTextAreaElement;
+    ta.style.height = "auto";
+
+    const maxHeight = 200;
+    if (ta.scrollHeight > maxHeight) {
+      ta.style.height = maxHeight + "px";
+      ta.style.overflowY = "auto";
+    } else {
+      ta.style.height = ta.scrollHeight + "px";
+      ta.style.overflowY = "hidden";
+    }
+  }}
+  onKeyDown={(e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      if (isTyping) return;
+      if (input.trim()) sendMessage(input);
+    }
+  }}
+  className="
+  flex-1 bg-white/10 rounded-2xl px-4 py-3
+  focus:outline-none resize-none text-sm sm:text-base
+  transition-[height] duration-150 ease-out
+"
+
+
+  rows={1}
+/>
+
+
+
+<button
+  onClick={() => sendMessage(input)}
+  disabled={isTyping || !input.trim()}
+  className={`
+    px-4 sm:px-6 py-3 rounded-2xl font-semibold
+    ${isTyping || !input.trim()
+      ? "bg-white/20 text-black/40 cursor-not-allowed"
+      : "bg-white text-black"}
+  `}
+>
+  Send
+</button>
+
+
+  </div>
+</div>
+
+        </main>
+
+
+    {/* SIDEBAR */} 
+<aside
+  className={`
+    fixed top-0 right-0 z-[999]
+    h-screen w-64
+    bg-black/40 backdrop-blur-xl
+    border-l border-white/10
+    flex flex-col overflow-hidden
+    transition-transform duration-300 ease-out
+    ${sidebarOpen ? "translate-x-0" : "translate-x-full"}
+  `}
+>
+
+
+
+  <div className="flex justify-between px-4 py-4 border-b border-white/10">
+    <span className="font-semibold">Chats</span>
+    <button onClick={() => setSidebarOpen(false)}>✕</button>
+  </div>
+
+  {/* Tools Section */}
+  <div className="px-4 py-4 space-y-3 border-b border-white/5">
+    <button
+      onClick={newChat}
+      className="w-full bg-white text-black py-2 rounded-xl font-semibold shadow-lg hover:shadow-white/20 transition"
+    >
+      + New Chat
+    </button>
+
+    <button
+      onClick={() => setAssignmentOpen(true)}
+      className="w-full py-2 rounded-xl font-semibold bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 shadow-lg hover:shadow-pink-600/30 transition flex items-center justify-center gap-2"
+    >
+      ✎ Assignment
+    </button>
+
+    <button
+      onClick={() => setResearchOpen(true)}
+      className="w-full py-2 rounded-xl font-semibold bg-gradient-to-r from-blue-600 to-cyan-500 hover:from-blue-700 hover:to-cyan-600 shadow-lg hover:shadow-blue-500/30 transition flex items-center justify-center gap-2"
+    >
+      🔍 Research
+    </button>
+
+    <button
+      onClick={() => setPptOpen(true)}
+      className="w-full py-2 rounded-xl font-semibold bg-gradient-to-r from-yellow-500 to-orange-500 hover:from-yellow-600 hover:to-orange-600 shadow-lg hover:shadow-yellow-400/30 transition flex items-center justify-center gap-2"
+    >
+      📊 PPT Mode
+    </button>
+  </div>
+
+  {/* CHAT LIST */}
+  <div className="flex-1 overflow-y-auto px-2 py-4 space-y-4 custom-scroll">
+    {pinned.length > 0 && (
+      <div>
+        <p className="px-3 text-xs uppercase tracking-wider text-gray-400">Pinned</p>
+
+        {pinned.map((chat) => (
+          <MemoChatRow
+            key={chat.id}
+            chat={chat}
+            activeChatId={activeChatId}
+            setActiveChat={setActiveChat}
+            openChatMenu={openChatMenu}
+            setOpenChatMenu={setOpenChatMenu}
+            chatMenuRef={chatMenuRef}
+            togglePin={togglePin}
+            renameChat={renameChat}
+            deleteChat={deleteChat}
+          />
+        ))}
+      </div>
+    )}
+
+    {normal.map((chat) => (
+      <MemoChatRow
+        key={chat.id}
+        chat={chat}
+        activeChatId={activeChatId}
+        setActiveChat={setActiveChat}
+        openChatMenu={openChatMenu}
+        setOpenChatMenu={setOpenChatMenu}
+        chatMenuRef={chatMenuRef}
+        togglePin={togglePin}
+        renameChat={renameChat}
+        deleteChat={deleteChat}
+      />
+    ))}
+  </div>
+
+  {/* bottom padding for non-congested look */}
+  <div className="h-12"></div>
+        {/* PROFILE SECTION */}
+        <div ref={profileRef} className="border-t border-white/10 p-4 relative">
+          <div
+            onClick={() => setProfileOpen(!profileOpen)}
+            className="flex gap-3 p-2 rounded-xl hover:bg-white/10 cursor-pointer"
+          >
+            <div className="w-10 h-10 bg-purple-600 rounded-full flex items-center justify-center text-xl">
+              {currentUser?.displayName?.charAt(0)?.toUpperCase() || "U"}
+            </div>
+
+            <div>
+              <p className="text-sm font-medium">{currentUser?.displayName || "User"}</p>
+              <p className="text-xs text-gray-400">Free Plan</p>
+            </div>
+          </div>
+
+          {profileOpen && (
+            
+  <div
+    className="
+      absolute bottom-24 left-3 w-64 
+      rounded-2xl 
+      bg-[#0F0F11]/90
+      border border-white/10 
+      shadow-[0_0_35px_rgba(168,85,247,0.25)]
+      p-4 
+      backdrop-blur-xl 
+      z-50
+      transform origin-bottom-left
+      animate-profilePopup
+    "
+  >
+
+              <div className="flex items-center gap-3 px-3 py-2 border-b border-white/10">
+                <div className="w-11 h-11 rounded-full overflow-hidden border-2 border-purple-500 shadow-[0_0_12px_rgba(168,85,247,0.6)] flex items-center justify-center text-lg font-semibold bg-purple-600/80">
+
+                  {currentUser?.displayName?.charAt(0)?.toUpperCase() || "U"}
+                </div>
+
+                <div className="flex flex-col leading-tight">
+                  <span className="text-sm font-semibold">{currentUser?.displayName || "User"}</span>
+                  <span className="text-[11px] text-gray-400">Free Plan</span>
+                </div>
+              </div>
+
+             
+
+
+              <button
+                onClick={() => {
+                  setEditProfileOpen(true);
+                  setProfileOpen(false);
+                }}
+                className="w-full text-left px-4 py-2 hover:bg-white/10 transition-all duration-200 rounded-lg hover:translate-x-1"
+
+              >
+                Edit Profile
+              </button>
+
+              <button
+  onClick={() => {
+    setSettingsOpen(true);
+    setProfileOpen(false);
+  }}
+  className="w-full text-left px-4 py-2 hover:bg-[#252528] rounded-md transition"
+>
+  Settings
+</button>
+
+
+              <button className="w-full text-left px-4 py-2 bg-gradient-to-r from-purple-600/20 to-pink-600/20 hover:from-purple-600/30 hover:to-pink-600/30 text-purple-300 rounded-lg mt-1 transition-all duration-200 hover:translate-x-1">
+               Upgrade Plan
+              </button>
+
+
+              <button
+                 onClick={handleLogout}
+                 className="w-full text-left px-4 py-2 hover:bg-red-500/10 text-red-400 rounded-lg transition-all duration-200 hover:translate-x-1"
+>
+                    Logout
+                </button>
+                
+
+            </div>
+          )}
+        </div>
+
+      </aside>
+    </div>
+  </>
+);
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
+import { useAuth } from "@/contextAuth/AuthContext";
+
+/* =========================================================
+   HOME
+========================================================= */
+export default function Home() {
+  const { user, logout } = useAuth();
+  const startHref = user ? "/chat" : "/login";
+
+  const bgRef = useRef<HTMLDivElement>(null);
+  const [isTouch, setIsTouch] = useState(false);
+  const [billing, setBilling] = useState<"monthly" | "yearly">("monthly");
+const leftRefs = [useRef<HTMLDivElement>(null), useRef<HTMLDivElement>(null), useRef<HTMLDivElement>(null)];
+const rightRefs = [useRef<HTMLDivElement>(null), useRef<HTMLDivElement>(null), useRef<HTMLDivElement>(null)];
+const coreRef = useRef<HTMLDivElement>(null);
+
+
+  /* ===== DETECT TOUCH DEVICE (SAFE) ===== */
+  useEffect(() => {
+    setIsTouch(window.matchMedia("(hover: none)").matches);
+  }, []);
+
+  /* ===== SCROLL DEPTH PARALLAX ===== */
+  useEffect(() => {
+    const onScroll = () => {
+      if (!bgRef.current) return;
+      const y = window.scrollY;
+      const intensity = window.innerWidth < 768 ? 0.05 : 0.15;
+      bgRef.current.style.transform = `translateY(${y * intensity}px)`;
+    };
+
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+
+  return (
+    <main className="relative min-h-screen text-white overflow-hidden">
+
+      {/* =====================================================
+         PREMIUM ANIMATED BACKGROUND
+      ===================================================== */}
+      <div
+        ref={bgRef}
+        className="absolute inset-0 -z-10 overflow-hidden noise pointer-events-none will-change-transform"
+      >
+        <div
+          className="absolute inset-0"
+          style={{
+            background:
+              "linear-gradient(135deg, #0A0D12, #10162A, #05070C)",
+            backgroundSize: "400% 400%",
+            animation: "gradientMove 30s ease infinite",
+          }}
+        />
+
+        <div
+          className="absolute inset-0 opacity-[0.06]"
+          style={{
+            backgroundImage:
+              "linear-gradient(rgba(255,255,255,0.15) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.15) 1px, transparent 1px)",
+            backgroundSize: "40px 40px",
+            animation: "gridMove 45s linear infinite",
+          }}
+        />
+
+        <div
+          className="absolute w-[600px] h-[600px] bg-cyan-400/10 rounded-full blur-[140px] -top-40 -left-40"
+          style={{ animation: "floatSlow 35s ease-in-out infinite" }}
+        />
+        <div
+          className="absolute w-[500px] h-[500px] bg-indigo-500/10 rounded-full blur-[140px] -bottom-40 -right-40"
+          style={{ animation: "floatSlow 40s ease-in-out infinite" }}
+        />
+      </div>
+
+      {/* =====================================================
+         NAVBAR
+      ===================================================== */}
+      <header className="sticky top-6 z-50 max-w-7xl mx-auto px-6">
+        <div className="backdrop-blur-xl bg-white/5 border border-white/10 rounded-2xl px-6 py-4 flex justify-between items-center">
+          <h1 className="text-lg font-semibold tracking-wide">AI Videxa</h1>
+
+          {!user ? (
+            <Link href="/login" className="text-sm text-white/80 hover:text-white">
+              Login
+            </Link>
+          ) : (
+            <button
+              onClick={logout}
+              className="text-sm text-red-400 hover:text-red-500"
+            >
+              Logout
+            </button>
+          )}
+        </div>
+      </header>
+
+      {/* =====================================================
+         HERO
+      ===================================================== */}
+      <section className="relative max-w-5xl mx-auto px-6 pt-24 md:pt-32 text-center">
+
+        {/* 🌌 LIVING ACADEMIC CANVAS */}
+        <LivingAcademicCanvas />
+
+        <h2 className="text-4xl md:text-6xl font-semibold leading-tight">
+          The future of <br />
+          <span className="hero-underline bg-gradient-to-r from-cyan-300 to-indigo-300 bg-clip-text text-transparent">
+            academic productivity
+          </span>
+        </h2>
+
+        <p className="mt-6 text-lg text-white/70 max-w-2xl mx-auto">
+          AI Videxa helps students generate structured assignments, research,
+          and presentations — responsibly and securely.
+        </p>
+
+        <div className="mt-10 flex justify-center gap-4">
+          <MagneticButton href={startHref} isTouch={isTouch}>
+            {user ? "Open Dashboard" : "Start Free"}
+          </MagneticButton>
+
+          <a
+            href="#pricing"
+            className="px-8 py-3 rounded-xl border border-white/20 text-white/80 hover:bg-white/5 transition active:scale-95"
+          >
+            Pricing
+          </a>
+        </div>
+
+        <p className="mt-4 text-sm text-white/50">
+          No credit card • Privacy-first • Student safe
+        </p>
+      </section>
+{/* HERO FEATURE STRIP */}
+<div className="mt-12 grid grid-cols-1 sm:grid-cols-3 gap-4 max-w-3xl mx-auto">
+  <HeroFeature
+    icon="⚡"
+    title="Fast drafts"
+    description="Generate well-structured academic drafts in minutes instead of hours, without compromising clarity."
+    isTouch={isTouch}
+  />
+  <HeroFeature
+    icon="🔒"
+    title="Privacy-first"
+    description="Your inputs and generated content are never sold, shared, or used for training third-party models."
+    isTouch={isTouch}
+  />
+  <HeroFeature
+    icon="📘"
+    title="Exam-ready structure"
+    description="Answers are formatted with introductions, headings, and conclusions that align with exam evaluation patterns."
+    isTouch={isTouch}
+  />
+</div>
+
+
+      {/* =====================================================
+         HOW IT WORKS
+      ===================================================== */}
+      <Section title="How AI Videxa Works">
+        {[
+          ["01", "Enter your task", "Topic, subject, and requirements."],
+          ["02", "AI structures it", "Clean, academic, exam-ready output."],
+          ["03", "Learn & submit", "Edit, understand, finalize confidently."]
+        ].map(([step, title, desc]) => (
+          <TiltCard key={title} isTouch={isTouch}>
+            <div className="text-cyan-400 text-sm font-medium">
+              STEP {step}
+            </div>
+            <h4 className="mt-2 font-semibold">{title}</h4>
+            <p className="mt-2 text-sm text-white/70">{desc}</p>
+          </TiltCard>
+        ))}
+      </Section>
+
+      {/* =====================================================
+         FEATURES
+      ===================================================== */}
+      <Section title="Built for Serious Academic Use">
+        {[
+          ["Structured output", "Clear flow with proper headings"],
+          ["Ethical by design", "Supports learning, not plagiarism"],
+          ["Multiple formats", "Assignments, research, PPTs"]
+        ].map(([title, desc]) => (
+          <TiltCard key={title} isTouch={isTouch}>
+            <h4 className="font-medium">{title}</h4>
+            <p className="mt-2 text-sm text-white/70">{desc}</p>
+          </TiltCard>
+        ))}
+      </Section>
+
+      {/* =====================================================
+         TRUST
+      ===================================================== */}
+      <section className="mt-28 md:mt-36 max-w-6xl mx-auto px-6">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-8 text-center">
+          {[
+            ["Privacy protected", "Your data is never sold or shared"],
+            ["Secure by default", "Modern auth & encryption"],
+            ["Student focused", "Designed for real academic needs"]
+          ].map(([title, desc]) => (
+            <div key={title}>
+              <h4 className="font-semibold">{title}</h4>
+              <p className="mt-2 text-sm text-white/60">{desc}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* =====================================================
+         PRICING
+      ===================================================== */}
+     <section id="pricing" className="mt-32 md:mt-40 max-w-6xl mx-auto px-6">
+  <h3 className="text-2xl font-semibold text-center">
+    Pricing
+  </h3>
+
+  {/* BILLING TOGGLE */}
+<div className="mt-8 flex justify-center">
+  <div className="relative flex w-[240px] h-[44px] rounded-full bg-white/5 border border-white/10 backdrop-blur-xl overflow-hidden">
+
+    {/* SLIDER */}
+    <span
+      className={`
+        absolute top-0 left-0
+        w-1/2 h-full
+        rounded-full
+        bg-gradient-to-r from-cyan-400 to-indigo-400
+        transition-transform duration-500 ease-[cubic-bezier(0.22,1,0.36,1)]
+        ${billing === "yearly" ? "translate-x-full" : "translate-x-0"}
+      `}
+    />
+
+    {/* MONTHLY */}
+    <button
+      onClick={() => setBilling("monthly")}
+      className={`
+        relative z-10 flex-1
+        text-sm font-medium
+        transition-colors duration-300
+        ${billing === "monthly" ? "text-black" : "text-white/60 hover:text-white"}
+      `}
+    >
+      Monthly
+    </button>
+
+    {/* YEARLY */}
+    <button
+      onClick={() => setBilling("yearly")}
+      className={`
+        relative z-10 flex-1
+        text-sm font-medium
+        transition-colors duration-300
+        ${billing === "yearly" ? "text-black" : "text-white/60 hover:text-white"}
+      `}
+    >
+      Yearly
+    </button>
+  </div>
+</div>
+
+
+
+
+        <div className="mt-16 grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-8">
+  <PriceCard
+    title="Free"
+    price="₹0"
+    features={[
+      "Limited daily usage",
+      "Academic drafts",
+    ]}
+    action="Start Free"
+    href={startHref}
+  />
+
+  <PriceCard
+  title="Student+"
+  price={billing === "monthly" ? "₹99 / month" : "₹999 / year"}
+  features={[
+    billing === "yearly" ? "Save 2 months (Best Value)" : "Higher limits",
+    "Advanced formatting",
+    "Faster generation",
+  ]}
+  highlight
+  badge={billing === "yearly"}
+  action="Coming Soon"
+/>
+
+
+  <PriceCard
+    title="Pro"
+    price={billing === "monthly" ? "₹299 / month" : "₹2999 / year"}
+    features={[
+      billing === "yearly" ? "Save 2 months" : "Research & PPT tools",
+      "Priority access",
+      "Advanced academic tools",
+    ]}
+    action="Coming Soon"
+  />
+</div>
+
+      </section>
+{/* =====================================================
+   AI Videxa FEATURES ENGINE (FINAL – SVG CONNECTED)
+===================================================== */}
+<section className="mt-40 max-w-7xl mx-auto px-6">
+  <h3 className="text-3xl font-semibold text-center mb-20">
+    Everything You Need for Academics
+  </h3>
+
+<div className="relative flex items-center justify-center">
+
+  {/* LEFT */}
+  <div className="flex flex-col gap-6 z-10">
+    <EngineCard ref={leftRefs[0]} title="Assignments" tag="Core Feature" desc="Generate structured, exam-ready assignments." />
+    <EngineCard ref={leftRefs[1]} title="Deep Research" tag="In-depth" desc="Detailed research with concepts and explanations." />
+    <EngineCard ref={leftRefs[2]} title="Handwritten Notes" tag="Unique" desc="Convert content into handwritten-style notes." />
+  </div>
+
+  {/* CONNECTORS (THIS IS WHERE IT GOES) */}
+  <EngineConnectors
+    leftRefs={leftRefs}
+    rightRefs={rightRefs}
+    coreRef={coreRef}
+  />
+
+  {/* CORE */}
+  <div ref={coreRef} className="mx-24 z-20">
+    <div className="w-44 h-44 rounded-full bg-[#0E1320] border border-white/20
+      flex items-center justify-center text-center
+      shadow-[0_0_90px_rgba(34,211,238,0.3)]
+      animate-[corePulse_6s_ease-in-out_infinite]">
+      <div>
+        <p className="text-lg font-semibold">AI Videxa</p>
+        <p className="text-sm text-white/60 mt-1">Academic Engine</p>
+      </div>
+    </div>
+  </div>
+
+  {/* RIGHT */}
+  <div className="flex flex-col gap-6 z-10">
+    <EngineCard ref={rightRefs[0]} title="PPT Generator" tag="Presentations" desc="Create clean topic-wise presentations." />
+    <EngineCard ref={rightRefs[1]} title="Text to PDF" tag="Export" desc="Convert content into PDFs." />
+    <EngineCard ref={rightRefs[2]} title="Smart Formatting" tag="Automatic" desc="Applies academic formatting automatically." />
+  </div>
+
+</div>
+
+</section>
+
+
+{/* =====================================================
+   FAQ
+===================================================== */}
+<section className="mt-40 max-w-5xl mx-auto px-6">
+  <h3 className="text-3xl font-semibold text-center mb-16">
+    Frequently Asked Questions
+  </h3>
+
+  <div className="space-y-4">
+    <FAQItem
+      q="Is AI Videxa safe for students?"
+      a="Yes. AI Videxa is designed to support learning, not replace it. All outputs are structured for understanding and revision, not direct submission."
+    />
+
+    <FAQItem
+      q="Does AI Videxa store or sell my data?"
+      a="No. Your inputs and generated content are private. We do not sell, share, or use your data to train third-party models."
+    />
+
+    <FAQItem
+      q="Can I use AI Videxa for exams and assignments?"
+      a="AI Videxa helps you prepare drafts, structure answers, and understand topics. Always review and personalize before submission."
+    />
+
+    <FAQItem
+      q="What formats does AI Videxa support?"
+      a="Assignments, research content, PPT outlines, and PDF-ready structured text — all optimized for academic use."
+    />
+
+    <FAQItem
+      q="Is there a free plan?"
+      a="Yes. You can start for free with limited daily usage. Paid plans unlock higher limits and advanced tools."
+    />
+  </div>
+</section>
+
+
+
+{/* =====================================================
+   GLOBAL ACADEMIC EXPLAINER
+===================================================== */}
+<section className="mt-40 max-w-6xl mx-auto px-6">
+  <h3 className="text-3xl font-semibold text-center mb-6">
+    AI Videxa for Students Worldwide
+  </h3>
+
+  <p className="text-center text-white/60 max-w-3xl mx-auto mb-16">
+    Designed to support modern academic systems across countries,
+    syllabi, and learning styles.
+  </p>
+
+  <MultilingualAI VidexaInfo />
+</section>
+
+
+
+      {/* =====================================================
+         FOOTER
+      ===================================================== */}
+      <footer className="mt-32 md:mt-40 py-12 text-center text-sm text-white/50 border-t border-white/10">
+        <p>
+          AI Videxa supports learning. Generated content is for reference only.
+        </p>
+
+        <div className="mt-4 flex justify-center gap-6">
+          <Link href="/privacy">Privacy</Link>
+          <Link href="/terms">Terms</Link>
+          <Link href="/contact">Contact</Link>
+        </div>
+
+        <p className="mt-4 text-xs">
+          © {new Date().getFullYear()} AI Videxa
+        </p>
+      </footer>
+    </main>
+  );
+}
+
+/* =========================================================
+   LIVING ACADEMIC CANVAS
+========================================================= */
+function LivingAcademicCanvas() {
+  return (
+    <div className="absolute inset-0 pointer-events-none overflow-hidden">
+      <div className="absolute left-[12%] top-0 h-full w-px bg-white/10" />
+
+      <div className="absolute top-[20%] left-[18%] w-[60%] h-16 academic-block delay-1" />
+      <div className="absolute top-[34%] left-[18%] w-[52%] h-14 academic-block delay-2" />
+      <div className="absolute top-[48%] left-[18%] w-[58%] h-14 academic-block delay-3" />
+
+      <div className="absolute top-[64%] left-[20%] flex flex-col gap-4">
+        <div className="academic-bullet delay-2" />
+        <div className="academic-bullet delay-3" />
+        <div className="academic-bullet delay-4" />
+      </div>
+    </div>
+  );
+}
+
+/* =========================================================
+   REUSABLE COMPONENTS
+========================================================= */
+
+function Section({ title, children }: any) {
+  return (
+    <section className="mt-28 md:mt-36 max-w-6xl mx-auto px-6">
+      <h3 className="text-2xl font-semibold text-center">{title}</h3>
+      <div className="mt-16 grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-8">
+        {children}
+      </div>
+    </section>
+  );
+}
+
+function TiltCard({ children, isTouch }: any) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  const onMove = (e: React.MouseEvent) => {
+    if (!ref.current || isTouch) return;
+    const r = ref.current.getBoundingClientRect();
+    const x = e.clientX - r.left;
+    const y = e.clientY - r.top;
+    const rx = ((y / r.height) - 0.5) * -8;
+    const ry = ((x / r.width) - 0.5) * 8;
+    ref.current.style.transform =
+      `rotateX(${rx}deg) rotateY(${ry}deg) scale(1.03)`;
+  };
+
+  const onLeave = () => {
+    if (!ref.current) return;
+    ref.current.style.transform = "scale(1)";
+  };
+
+  return (
+    <div
+      ref={ref}
+      onMouseMove={onMove}
+      onMouseLeave={onLeave}
+      className="backdrop-blur-xl bg-white/5 border border-white/10 rounded-2xl p-6 transition-transform duration-300 will-change-transform active:scale-[0.97]"
+      style={{ transformStyle: "preserve-3d" }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function MagneticButton({ href, children, isTouch }: any) {
+  const ref = useRef<HTMLAnchorElement>(null);
+
+  const onMove = (e: React.MouseEvent) => {
+    if (!ref.current || isTouch) return;
+    const r = ref.current.getBoundingClientRect();
+    const x = e.clientX - r.left - r.width / 2;
+    const y = e.clientY - r.top - r.height / 2;
+    ref.current.style.transform = `translate(${x * 0.15}px, ${y * 0.15}px)`;
+  };
+
+  const onLeave = () => {
+    if (!ref.current) return;
+    ref.current.style.transform = "translate(0, 0)";
+  };
+
+  return (
+    <Link
+      href={href}
+      ref={ref}
+      onMouseMove={onMove}
+      onMouseLeave={onLeave}
+      className="px-8 py-3 rounded-xl font-medium bg-gradient-to-r from-cyan-500 to-indigo-500 text-black transition-transform duration-300 active:scale-95 active:brightness-110"
+    >
+      {children}
+    </Link>
+  );
+}
+
+function PriceCard({
+  title,
+  price,
+  features,
+  action,
+  href,
+  highlight,
+  badge,
+}: any) {
+  return (
+    <div
+      className={`
+        relative overflow-hidden
+        backdrop-blur-xl rounded-2xl p-6 text-center border
+        transition-all duration-500
+        ${highlight
+          ? "bg-white/15 border-cyan-400/40"
+          : "bg-white/5 border-white/10"}
+      `}
+    >
+      {/* BEST VALUE BADGE */}
+      {badge && (
+        <div
+          className="
+            absolute top-4 right-4
+            px-3 py-1 text-xs font-semibold
+            rounded-full
+            bg-gradient-to-r from-cyan-400 to-indigo-400
+            text-black
+            shadow-[0_0_20px_rgba(34,211,238,0.6)]
+            animate-badgeSlide
+          "
+        >
+          Best Value
+        </div>
+      )}
+
+      <h4 className="font-semibold">{title}</h4>
+      <p className="mt-2 text-2xl font-semibold animate-priceSwap">
+        {price}
+      </p>
+
+      <ul className="mt-4 space-y-2 text-sm text-white/70">
+        {features.map((f: string) => (
+          <li key={f}>✔ {f}</li>
+        ))}
+      </ul>
+
+      {href ? (
+        <Link
+          href={href}
+          className="inline-block mt-6 px-6 py-2 rounded-lg bg-white text-black font-medium"
+        >
+          {action}
+        </Link>
+      ) : (
+        <button className="mt-6 px-6 py-2 rounded-lg border border-white/20 text-white/60">
+          {action}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function HeroFeature({
+  icon,
+  title,
+  description,
+  isTouch,
+}: {
+  icon: string;
+  title: string;
+  description: string;
+  isTouch: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  /* Close on outside tap (mobile) */
+  useEffect(() => {
+    if (!open) return;
+
+    const onClick = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+
+    document.addEventListener("click", onClick);
+    return () => document.removeEventListener("click", onClick);
+  }, [open]);
+
+  return (
+    <div
+      ref={ref}
+      className="relative"
+      onMouseEnter={() => !isTouch && setOpen(true)}
+      onMouseLeave={() => !isTouch && setOpen(false)}
+      onClick={() => isTouch && setOpen(v => !v)}
+    >
+      {/* FEATURE CHIP */}
+      <div
+        className="
+          flex items-center justify-center gap-2 text-sm text-white/70
+          backdrop-blur-md bg-white/5 border border-white/10
+          rounded-xl py-3 cursor-default
+          transition-transform duration-200
+          hover:scale-[1.03]
+          active:scale-95
+        "
+      >
+        <span>{icon}</span>
+        <span>{title}</span>
+      </div>
+
+      {/* TOOLTIP */}
+      {open && (
+        <div
+          className="
+            absolute left-1/2 -translate-x-1/2 mt-3 w-72 z-50
+            backdrop-blur-xl bg-[#0E1320]/90
+            border border-white/10 rounded-xl p-4
+            text-sm text-white/80
+            shadow-xl
+            animate-fadeIn
+          "
+        >
+          {description}
+
+          {/* Tooltip arrow */}
+          <div className="absolute -top-2 left-1/2 -translate-x-1/2 w-4 h-4 bg-[#0E1320]/90 border-l border-t border-white/10 rotate-45" />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function EngineConnectors({
+  leftRefs,
+  rightRefs,
+  coreRef,
+}: {
+  leftRefs: React.RefObject<HTMLDivElement>[];
+  rightRefs: React.RefObject<HTMLDivElement>[];
+  coreRef: React.RefObject<HTMLDivElement>;
+}) {
+  const [paths, setPaths] = useState<string[]>([]);
+  const svgRef = useRef<SVGSVGElement>(null);
+
+  useEffect(() => {
+    const update = () => {
+      if (!coreRef.current || !svgRef.current) return;
+
+      const svgRect = svgRef.current.getBoundingClientRect();
+      const core = coreRef.current.getBoundingClientRect();
+
+      const cx = core.left + core.width / 2 - svgRect.left;
+      const cy = core.top + core.height / 2 - svgRect.top;
+
+      const buildCurve = (from: DOMRect, side: "left" | "right") => {
+        const sx = side === "left" ? from.right : from.left;
+        const sy = from.top + from.height / 2;
+
+        const ex = cx;
+        const ey = cy;
+
+        const bend = Math.abs(ex - sx) * 0.45;
+
+        const c1x = side === "left" ? sx + bend : sx - bend;
+        const c1y = sy;
+
+        return `M ${sx} ${sy} C ${c1x} ${c1y}, ${ex} ${ey}, ${ex} ${ey}`;
+      };
+
+      const newPaths: string[] = [];
+
+      leftRefs.forEach(r => {
+        if (r.current)
+          newPaths.push(buildCurve(r.current.getBoundingClientRect(), "left"));
+      });
+
+      rightRefs.forEach(r => {
+        if (r.current)
+          newPaths.push(buildCurve(r.current.getBoundingClientRect(), "right"));
+      });
+
+      setPaths(newPaths);
+    };
+
+    update();
+    window.addEventListener("resize", update);
+    window.addEventListener("scroll", update, true);
+
+    return () => {
+      window.removeEventListener("resize", update);
+      window.removeEventListener("scroll", update, true);
+    };
+  }, []);
+
+  return (
+    <svg
+      ref={svgRef}
+      className="absolute inset-0 pointer-events-none z-0"
+    >
+      {paths.map((d, i) => (
+        <path key={i} d={d} className="engine-curve" />
+      ))}
+    </svg>
+  );
+}
+
+
+
+
+import { forwardRef } from "react";
+
+const EngineCard = forwardRef<
+  HTMLDivElement,
+  {
+    title: string;
+    tag: string;
+    desc: string;
+  }
+>(function EngineCard({ title, tag, desc }, ref) {
+  return (
+    <div
+      ref={ref}
+      className="
+        w-80 h-44
+        flex flex-col justify-center
+        backdrop-blur-xl bg-white/5 border border-white/10
+        rounded-2xl p-6
+        transition-all duration-300
+        hover:scale-[1.03]
+        hover:border-cyan-400/40
+      "
+    >
+      <div className="text-sm text-cyan-400 mb-1">{tag}</div>
+      <h4 className="font-semibold">{title}</h4>
+      <p className="mt-2 text-sm text-white/70">{desc}</p>
+    </div>
+  );
+});
+
+
+function FAQItem({ q, a }: { q: string; a: string }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div
+      className={`
+        backdrop-blur-xl bg-white/5 border border-white/10
+        rounded-2xl p-6 cursor-pointer
+        transition-all duration-300
+        ${open ? "border-cyan-400/40 shadow-[0_0_30px_rgba(34,211,238,0.15)]" : ""}
+      `}
+      onClick={() => setOpen(v => !v)}
+    >
+      <div className="flex items-center justify-between">
+        <h4 className="font-medium text-white">{q}</h4>
+
+        <span
+          className={`
+            ml-4 text-cyan-300 transition-transform duration-300
+            ${open ? "rotate-45" : "rotate-0"}
+          `}
+        >
+          +
+        </span>
+      </div>
+
+      <div
+        className={`
+          overflow-hidden transition-all duration-300
+          ${open ? "max-h-40 mt-4 opacity-100" : "max-h-0 opacity-0"}
+        `}
+      >
+        <p className="text-sm text-white/70 leading-relaxed">
+          {a}
+        </p>
+      </div>
+    </div>
+  );
+}
+function MultilingualAI VidexaInfo() {
+const content = [
+  {
+    lang: "English · Global",
+    region: "USA · UK · International",
+    text: `
+AI Videxa is an AI-powered academic productivity platform built for students.
+
+It helps you:
+• Create structured assignments with clear introductions and conclusions
+• Prepare research content with proper academic flow
+• Generate presentation-ready outlines
+• Convert content into clean, submission-ready PDFs
+• Maintain ethical academic standards
+
+AI Videxa is designed to support learning and understanding,
+not to replace genuine student effort.
+    `,
+  },
+
+  {
+    lang: "हिन्दी · भारत",
+    region: "CBSE · ICSE · विश्वविद्यालय",
+    text: `
+AI Videxa छात्रों के लिए बनाया गया एक AI आधारित अकादमिक सहायक है।
+
+इसकी मदद से आप:
+• सही प्रारूप में असाइनमेंट तैयार कर सकते हैं
+• विषयों को गहराई से समझ सकते हैं
+• परीक्षा के लिए संरचित उत्तर बना सकते हैं
+• PPT और PDF के लिए साफ़ कंटेंट तैयार कर सकते हैं
+
+AI Videxa सीखने को मजबूत बनाता है,
+न कि नकल को बढ़ावा देता है।
+    `,
+  },
+
+  {
+    lang: "Hinglish · India",
+    region: "Colleges · Competitive Exams",
+    text: `
+AI Videxa ek smart academic tool hai jo students ko better padhne mein help karta hai.
+
+Isse aap:
+• Assignments ko proper exam format mein bana sakte ho
+• Research topics ko clearly samajh sakte ho
+• PPT aur notes ke liye structured content paa sakte ho
+• Handwritten-style notes generate kar sakte ho
+
+AI Videxa ka focus learning aur understanding pe hai,
+shortcuts pe nahi.
+    `,
+  },
+
+  {
+    lang: "中文 · 中国",
+    region: "大学 · 学术研究",
+    text: `
+AI Videxa 是一款为学生设计的人工智能学术辅助平台。
+
+它可以帮助你：
+• 编写结构清晰的作业
+• 理解复杂的学术概念
+• 准备研究型内容
+• 生成适合提交的文档和演示结构
+• 遵守学术诚信原则
+
+AI Videxa 的目标是辅助学习，
+而不是替代学生的思考过程。
+    `,
+  },
+
+  {
+    lang: "日本語 · 日本",
+    region: "大学 · 専門教育",
+    text: `
+AI Videxa は学生向けに設計された学習支援AIツールです。
+
+主な機能：
+• 論理的で整理されたレポート作成
+• 学術的な内容理解の補助
+• プレゼンテーション構成の作成
+• 学習用ノートや資料の整理
+
+AI Videxa は学習の質を高めるためのツールであり、
+提出の代行ではありません。
+    `,
+  },
+
+  {
+    lang: "Deutsch · Europa",
+    region: "Universitäten · Forschung",
+    text: `
+AI Videxa ist eine KI-gestützte Plattform zur akademischen Unterstützung.
+
+Sie hilft Studierenden bei:
+• Strukturierter Erstellung von Hausarbeiten
+• Wissenschaftlicher Recherche und Argumentation
+• Vorbereitung von Präsentationen
+• Einhaltung akademischer Standards
+
+AI Videxa unterstützt den Lernprozess
+und fördert eigenständiges Denken.
+    `,
+  },
+
+  {
+    lang: "한국어 · 대한민국",
+    region: "대학교 · 시험 준비",
+    text: `
+AI Videxa는 학생을 위한 AI 기반 학습 지원 도구입니다.
+
+주요 기능:
+• 체계적인 과제 및 답안 구성
+• 개념 이해를 돕는 설명
+• 시험 및 발표 준비용 구조 제공
+• 학문적 윤리와 독창성 유지
+
+AI Videxa는 학습을 돕는 도구이며,
+과제를 대신 수행하지 않습니다.
+    `,
+  },
+];
+
+
+  const [index, setIndex] = useState(0);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setIndex(i => (i + 1) % content.length);
+    }, 7000); // slower = premium feel
+
+    return () => clearInterval(timer);
+  }, []);
+
+  return (
+    <div className="relative overflow-hidden">
+      <div
+        key={index}
+        className="
+          backdrop-blur-xl bg-white/5 border border-white/10
+          rounded-3xl p-8 md:p-10
+          text-white/80 leading-relaxed
+          animate-langSwap
+        "
+      >
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-sm text-cyan-300 tracking-wide">
+            {content[index].lang}
+          </div>
+          <div className="text-xs text-white/50">
+            {content[index].region}
+          </div>
+        </div>
+
+        <pre className="whitespace-pre-wrap text-sm md:text-base font-sans">
+          {content[index].text}
+        </pre>
+      </div>
+    </div>
+  );
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
+import { useAuth } from "@/contextAuth/AuthContext";
+import { motion, AnimatePresence } from "framer-motion";
+
+/* =========================================================
+   HOME
+========================================================= */
+export default function Home() {
+  const { user, logout } = useAuth();
+  const startHref = user ? "/chat" : "/login";
+  
+  const bgRef = useRef<HTMLDivElement>(null);
+  const [isTouch, setIsTouch] = useState(false);
+
+
+  const [billing, setBilling] = useState<"monthly" | "yearly">("monthly");
+const [hasSwitchedBilling, setHasSwitchedBilling] = useState(false);
+
+
+
+
+
+
+  /* ===== DETECT TOUCH DEVICE (SAFE) ===== */
+  useEffect(() => {
+    setIsTouch(window.matchMedia("(hover: none)").matches);
+  }, []);
+
+  /* ===== SCROLL DEPTH PARALLAX ===== */
+  useEffect(() => {
+    const onScroll = () => {
+      if (!bgRef.current) return;
+      const y = window.scrollY;
+      const intensity = window.innerWidth < 768 ? 0.05 : 0.15;
+      bgRef.current.style.transform = `translateY(${y * intensity}px)`;
+    };
+
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+
+  return (
+    <main className="relative min-h-screen text-white overflow-hidden">
+
+      {/* =====================================================
+         PREMIUM ANIMATED BACKGROUND
+      ===================================================== */}
+      <div
+        ref={bgRef}
+        className="absolute inset-0 -z-10 overflow-hidden noise pointer-events-none will-change-transform"
+      >
+        <div
+          className="absolute inset-0"
+          style={{
+            background:
+              "linear-gradient(135deg, #0A0D12, #10162A, #05070C)",
+            backgroundSize: "400% 400%",
+            animation: "gradientMove 30s ease infinite",
+          }}
+        />
+
+        <div
+          className="absolute inset-0 opacity-[0.06]"
+          style={{
+            backgroundImage:
+              "linear-gradient(rgba(255,255,255,0.15) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.15) 1px, transparent 1px)",
+            backgroundSize: "40px 40px",
+            animation: "gridMove 45s linear infinite",
+          }}
+        />
+
+        <div
+          className="absolute w-[600px] h-[600px] bg-cyan-400/10 rounded-full blur-[140px] -top-40 -left-40"
+          style={{ animation: "floatSlow 35s ease-in-out infinite" }}
+        />
+        <div
+          className="absolute w-[500px] h-[500px] bg-indigo-500/10 rounded-full blur-[140px] -bottom-40 -right-40"
+          style={{ animation: "floatSlow 40s ease-in-out infinite" }}
+        />
+      </div>
+
+      {/* =====================================================
+         NAVBAR
+      ===================================================== */}
+      <header className="sticky top-6 z-50 max-w-7xl mx-auto px-6">
+        <div className="backdrop-blur-xl bg-white/5 border border-white/10 rounded-2xl px-6 py-4 flex justify-between items-center">
+          <h1 className="text-lg font-semibold tracking-wide">AI Videxa</h1>
+
+          {!user ? (
+            <Link href="/login" className="text-sm text-white/80 hover:text-white">
+              Login
+            </Link>
+          ) : (
+            <button
+              onClick={logout}
+              className="text-sm text-red-400 hover:text-red-500"
+            >
+              Logout
+            </button>
+          )}
+        </div>
+      </header>
+
+      {/* =====================================================
+         HERO
+      ===================================================== */}
+      <section className="relative max-w-5xl mx-auto px-6 pt-24 md:pt-32 text-center">
+
+        {/* 🌌 LIVING ACADEMIC CANVAS */}
+        <LivingAcademicCanvas />
+
+        <h2 className="text-4xl md:text-6xl font-semibold leading-tight">
+          The future of <br />
+          <span className="hero-underline bg-gradient-to-r from-cyan-300 to-indigo-300 bg-clip-text text-transparent">
+            academic productivity
+          </span>
+        </h2>
+
+        <p className="mt-6 text-lg text-white/70 max-w-2xl mx-auto">
+          AI Videxa helps students generate structured assignments, research,
+          and presentations — responsibly and securely.
+        </p>
+
+        <div className="mt-10 flex justify-center gap-4">
+          <MagneticButton href={startHref} isTouch={isTouch}>
+            {user ? "Open Dashboard" : "Start Free"}
+          </MagneticButton>
+
+          <a
+            href="#pricing"
+            className="px-8 py-3 rounded-xl border border-white/20 text-white/80 hover:bg-white/5 transition active:scale-95"
+          >
+            Pricing
+          </a>
+        </div>
+
+        <p className="mt-4 text-sm text-white/50">
+          No credit card • Privacy-first • Student safe
+        </p>
+      </section>
+{/* HERO FEATURE STRIP */}
+<div className="mt-12 grid grid-cols-1 sm:grid-cols-3 gap-4 max-w-3xl mx-auto">
+  <HeroFeature
+    icon="⚡"
+    title="Fast drafts"
+    description="Generate well-structured academic drafts in minutes instead of hours, without compromising clarity."
+    isTouch={isTouch}
+  />
+  <HeroFeature
+    icon="🔒"
+    title="Privacy-first"
+    description="Your inputs and generated content are never sold, shared, or used for training third-party models."
+    isTouch={isTouch}
+  />
+  <HeroFeature
+    icon="📘"
+    title="Exam-ready structure"
+    description="Answers are formatted with introductions, headings, and conclusions that align with exam evaluation patterns."
+    isTouch={isTouch}
+  />
+</div>
+
+
+      {/* =====================================================
+         HOW IT WORKS
+      ===================================================== */}
+      <Section title="How AI Videxa Works">
+        {[
+          ["01", "Enter your task", "Topic, subject, and requirements."],
+          ["02", "AI structures it", "Clean, academic, exam-ready output."],
+          ["03", "Learn & submit", "Edit, understand, finalize confidently."]
+        ].map(([step, title, desc]) => (
+          <TiltCard key={title} isTouch={isTouch}>
+            <div className="text-cyan-400 text-sm font-medium">
+              STEP {step}
+            </div>
+            <h4 className="mt-2 font-semibold">{title}</h4>
+            <p className="mt-2 text-sm text-white/70">{desc}</p>
+          </TiltCard>
+        ))}
+      </Section>
+
+      {/* =====================================================
+         FEATURES
+      ===================================================== */}
+      <Section title="Built for Serious Academic Use">
+        {[
+          ["Structured output", "Clear flow with proper headings"],
+          ["Ethical by design", "Supports learning, not plagiarism"],
+          ["Multiple formats", "Assignments, research, PPTs"]
+        ].map(([title, desc]) => (
+          <TiltCard key={title} isTouch={isTouch}>
+            <h4 className="font-medium">{title}</h4>
+            <p className="mt-2 text-sm text-white/70">{desc}</p>
+          </TiltCard>
+        ))}
+      </Section>
+
+      {/* =====================================================
+         TRUST
+      ===================================================== */}
+      <section className="mt-28 md:mt-36 max-w-6xl mx-auto px-6">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-8 text-center">
+          {[
+            ["Privacy protected", "Your data is never sold or shared"],
+            ["Secure by default", "Modern auth & encryption"],
+            ["Student focused", "Designed for real academic needs"]
+          ].map(([title, desc]) => (
+            <div key={title}>
+              <h4 className="font-semibold">{title}</h4>
+              <p className="mt-2 text-sm text-white/60">{desc}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* =====================================================
+   PRICING
+===================================================== */}
+<section id="pricing" className="mt-32 md:mt-40 max-w-6xl mx-auto px-6">
+  <h3 className="text-2xl font-semibold text-center">
+    Simple Pricing
+  </h3>
+
+  {/* BILLING TOGGLE */}
+  <div className="mt-6 flex justify-center">
+  <div className="relative grid grid-cols-2 w-[220px] p-1 rounded-xl backdrop-blur-xl bg-white/5 border border-white/10">
+    
+    {/* SLIDING PILL */}
+    <motion.div
+      layout
+      transition={{ type: "spring", stiffness: 420, damping: 32 }}
+      className={`
+        absolute top-1 bottom-1 w-[calc(50%-4px)]
+        rounded-lg bg-white
+        ${billing === "monthly" ? "left-1" : "left-[calc(50%+1px)]"}
+      `}
+    />
+
+    {/* MONTHLY */}
+    <button
+      onClick={() => {
+        setBilling("monthly");
+        setHasSwitchedBilling(true);
+      }}
+      className={`relative z-10 py-2 text-sm font-medium transition-colors ${
+        billing === "monthly"
+          ? "text-black"
+          : "text-white/70 hover:text-white"
+      }`}
+    >
+      Monthly
+    </button>
+
+    {/* YEARLY */}
+    <button
+      onClick={() => {
+        setBilling("yearly");
+        setHasSwitchedBilling(true);
+      }}
+      className={`relative z-10 py-2 text-sm font-medium transition-colors ${
+        billing === "yearly"
+          ? "text-black"
+          : "text-white/70 hover:text-white"
+      }`}
+    >
+      Yearly
+    </button>
+
+  </div>
+</div>
+
+
+  {/* PRICING CARDS */}
+  <div className="mt-16 grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-8">
+
+    <PriceCard
+      title="Free"
+      price="₹0"
+      features={[
+        "Limited daily usage",
+        "Academic drafts",
+      ]}
+      action="Start Free"
+      href={startHref}
+    />
+
+    <PriceCard
+  title="Student+"
+  highlight
+  price={billing === "monthly" ? "₹299 / month" : "₹2,499 / year"}
+  badge={billing === "yearly" ? "Save 30%" : undefined}
+  hasSwitchedBilling={hasSwitchedBilling}
+  features={[
+    "Higher limits",
+    "Advanced formatting",
+    "Faster generation",
+  ]}
+  action="Coming Soon"
+/>
+
+
+   <PriceCard
+  title="Pro"
+  price={billing === "monthly" ? "₹599 / month" : "₹4,999 / year"}
+  badge={billing === "yearly" ? "Best value" : undefined}
+  hasSwitchedBilling={hasSwitchedBilling}
+  features={[
+    "Research & PPT tools",
+    "Priority access",
+    "Maximum limits",
+  ]}
+  action="Coming Soon"
+/>
+
+  </div>
+</section>
+
+{/* =====================================================
+   AI Videxa FEATURES ENGINE
+===================================================== */}
+<section className="mt-40 max-w-7xl mx-auto px-6">
+  <h3 className="text-3xl font-semibold text-center mb-20">
+    Everything You Need for Academics
+  </h3>
+
+<div className="relative flex flex-col lg:flex-row items-center justify-center gap-20">
+
+  
+{/* LEFT CONNECTOR RAIL */}
+<div className="hidden lg:block absolute left-1/2 -translate-x-[130px] top-0 h-full w-px overflow-hidden">
+  {/* static rail */}
+  <div className="absolute inset-0 bg-gradient-to-b from-transparent via-cyan-400/30 to-transparent" />
+
+  {/* vertical energy */}
+<span
+  className="
+    absolute top-1/2 left-0
+    w-px h-24
+    bg-cyan-300/80 blur-[2px]
+    animate-rail-down
+    -translate-y-1/2
+  "
+/>
+
+  {/* center-bound pulse */}
+<span className="
+  absolute top-1/2 left-0
+  h-px w-24
+  bg-gradient-to-r from-cyan-300 via-cyan-300/80 to-transparent
+  blur-sm
+  animate-to-center-left
+  delay-[1200ms]
+" />
+  {/* CARD HIT BURST */}
+<span className="
+  absolute top-1/2 left-0
+  w-2 h-2 rounded-full
+  bg-cyan-300 blur-md
+  animate-rail-hit
+" />
+
+</div>
+
+  {/* RIGHT CONNECTOR RAIL */}
+<div className="hidden lg:block absolute left-1/2 translate-x-[130px] top-0 h-full w-px overflow-hidden">
+  {/* static rail */}
+  <div className="absolute inset-0 bg-gradient-to-b from-transparent via-cyan-400/30 to-transparent" />
+
+  {/* vertical energy */}
+<span
+  className="
+    absolute top-1/2 left-0
+    w-px h-24
+    bg-cyan-300/80 blur-[2px]
+    animate-rail-down
+    -translate-y-1/2
+  "
+/>
+
+  {/* center-bound pulse */}
+<span className="
+  absolute top-1/2 right-0
+  h-px w-24
+  bg-gradient-to-l from-cyan-300 via-cyan-300/80 to-transparent
+  blur-sm
+  animate-to-center-right
+  delay-[1200ms]
+" />
+
+  <span className="
+  absolute top-1/2 right-0
+  w-2 h-2 rounded-full
+  bg-cyan-300 blur-md
+  animate-rail-hit
+" />
+
+</div>
+
+    {/* LEFT FEATURES */}
+    <div className="flex flex-col gap-6">
+      <EngineCard
+  side="left"
+  title="Assignments"
+  tag="Core Feature"
+  desc="Generate structured, exam-ready assignments with proper introductions, headings, and conclusions."
+/>
+
+<EngineCard
+  side="left"
+  title="Deep Research"
+  tag="In-depth"
+  desc="Detailed research with concepts, explanations, and examples for serious academic work."
+/>
+
+<EngineCard
+  side="left"
+  title="Handwritten Notes"
+  tag="Unique"
+  desc="Convert content into realistic handwritten-style notes for submissions."
+/>
+
+    </div>
+
+    {/* CENTER CORE */}
+<div className="relative flex items-center justify-center">
+
+  {/* CENTER ABSORPTION RIPPLE */}
+  <span
+    className="
+      absolute
+      w-44 h-44
+      rounded-full
+      border border-cyan-400/40
+      animate-center-ripple
+      pointer-events-none
+    "
+  />
+
+  {/* CENTER GLOW PULSE */}
+  <span
+    className="
+      absolute
+      w-52 h-52
+      rounded-full
+      bg-cyan-400/20
+      blur-2xl
+      animate-center-glow
+      pointer-events-none
+    "
+  />
+<div className="w-64 h-64 rounded-full bg-gradient-to-br from-cyan-500/40 to-indigo-500/40 blur-[90px] absolute animate-pulse" />
+      <div className="w-44 h-44 rounded-full bg-[#0E1320] border border-white/20 flex items-center justify-center text-center z-10">
+        <div>
+          <p className="text-lg font-semibold">AI Videxa</p>
+          <p className="text-sm text-white/60 mt-1">Academic Engine</p>
+        </div>
+      </div>
+    </div>
+
+    {/* RIGHT FEATURES */}
+    <div className="flex flex-col gap-6">
+      <EngineCard
+  side="right"
+  title="PPT Generator"
+  tag="Presentations"
+  desc="Create clean, topic-wise presentation slides with proper flow."
+/>
+
+<EngineCard
+  side="right"
+  title="Text to PDF"
+  tag="Export"
+  desc="Convert generated content into clean, submission-ready PDFs."
+/>
+
+<EngineCard
+  side="right"
+  title="Smart Formatting"
+  tag="Automatic"
+  desc="Automatically applies academic formatting, spacing, and readability standards."
+/>
+
+    </div>
+
+  </div>
+</section>
+
+{/* =====================================================
+   FAQ
+===================================================== */}
+<section className="mt-40 max-w-5xl mx-auto px-6">
+  <h3 className="text-3xl font-semibold text-center mb-16">
+    Frequently Asked Questions
+  </h3>
+
+  <div className="space-y-4">
+    <FAQItem
+      q="Is AI Videxa safe for students?"
+      a="Yes. AI Videxa is designed to support learning, not replace it. All outputs are structured for understanding and revision, not direct submission."
+    />
+
+    <FAQItem
+      q="Does AI Videxa store or sell my data?"
+      a="No. Your inputs and generated content are private. We do not sell, share, or use your data to train third-party models."
+    />
+
+    <FAQItem
+      q="Can I use AI Videxa for exams and assignments?"
+      a="AI Videxa helps you prepare drafts, structure answers, and understand topics. Always review and personalize before submission."
+    />
+
+    <FAQItem
+      q="What formats does AI Videxa support?"
+      a="Assignments, research content, PPT outlines, and PDF-ready structured text — all optimized for academic use."
+    />
+
+    <FAQItem
+      q="Is there a free plan?"
+      a="Yes. You can start for free with limited daily usage. Paid plans unlock higher limits and advanced tools."
+    />
+  </div>
+</section>
+
+
+
+{/* =====================================================
+   GLOBAL ACADEMIC EXPLAINER
+===================================================== */}
+<section className="mt-40 max-w-6xl mx-auto px-6">
+  <h3 className="text-3xl font-semibold text-center mb-6">
+    AI Videxa for Students Worldwide
+  </h3>
+
+  <p className="text-center text-white/60 max-w-3xl mx-auto mb-16">
+    Designed to support modern academic systems across countries,
+    syllabi, and learning styles.
+  </p>
+
+  <MultilingualAI VidexaInfo />
+</section>
+
+
+
+
+
+
+
+      {/* =====================================================
+         FOOTER
+      ===================================================== */}
+      <footer className="mt-32 md:mt-40 py-12 text-center text-sm text-white/50 border-t border-white/10">
+        <p>
+          AI Videxa supports learning. Generated content is for reference only.
+        </p>
+
+        <div className="mt-4 flex justify-center gap-6">
+          <Link href="/privacy">Privacy</Link>
+          <Link href="/terms">Terms</Link>
+          <Link href="/contact">Contact</Link>
+        </div>
+
+        <p className="mt-4 text-xs">
+          © {new Date().getFullYear()} AI Videxa
+        </p>
+      </footer>
+    </main>
+  );
+}
+
+/* =========================================================
+   LIVING ACADEMIC CANVAS
+========================================================= */
+function LivingAcademicCanvas() {
+  return (
+    <div className="absolute inset-0 pointer-events-none overflow-hidden">
+      <div className="absolute left-[12%] top-0 h-full w-px bg-white/10" />
+
+      <div className="absolute top-[20%] left-[18%] w-[60%] h-16 academic-block delay-1" />
+      <div className="absolute top-[34%] left-[18%] w-[52%] h-14 academic-block delay-2" />
+      <div className="absolute top-[48%] left-[18%] w-[58%] h-14 academic-block delay-3" />
+
+      <div className="absolute top-[64%] left-[20%] flex flex-col gap-4">
+        <div className="academic-bullet delay-2" />
+        <div className="academic-bullet delay-3" />
+        <div className="academic-bullet delay-4" />
+      </div>
+    </div>
+  );
+}
+
+/* =========================================================
+   REUSABLE COMPONENTS
+========================================================= */
+
+function Section({ title, children }: any) {
+  return (
+    <section className="mt-28 md:mt-36 max-w-6xl mx-auto px-6">
+      <h3 className="text-2xl font-semibold text-center">{title}</h3>
+      <div className="mt-16 grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-8">
+        {children}
+      </div>
+    </section>
+  );
+}
+
+function TiltCard({ children, isTouch }: any) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  const onMove = (e: React.MouseEvent) => {
+    if (!ref.current || isTouch) return;
+    const r = ref.current.getBoundingClientRect();
+    const x = e.clientX - r.left;
+    const y = e.clientY - r.top;
+    const rx = ((y / r.height) - 0.5) * -8;
+    const ry = ((x / r.width) - 0.5) * 8;
+    ref.current.style.transform =
+      `rotateX(${rx}deg) rotateY(${ry}deg) scale(1.03)`;
+  };
+
+  const onLeave = () => {
+    if (!ref.current) return;
+    ref.current.style.transform = "scale(1)";
+  };
+
+  return (
+    <div
+      ref={ref}
+      onMouseMove={onMove}
+      onMouseLeave={onLeave}
+      className="backdrop-blur-xl bg-white/5 border border-white/10 rounded-2xl p-6 transition-transform duration-300 will-change-transform active:scale-[0.97]"
+      style={{ transformStyle: "preserve-3d" }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function MagneticButton({ href, children, isTouch }: any) {
+  const ref = useRef<HTMLAnchorElement>(null);
+
+  const onMove = (e: React.MouseEvent) => {
+    if (!ref.current || isTouch) return;
+    const r = ref.current.getBoundingClientRect();
+    const x = e.clientX - r.left - r.width / 2;
+    const y = e.clientY - r.top - r.height / 2;
+    ref.current.style.transform = `translate(${x * 0.15}px, ${y * 0.15}px)`;
+  };
+
+  const onLeave = () => {
+    if (!ref.current) return;
+    ref.current.style.transform = "translate(0, 0)";
+  };
+
+  return (
+    <Link
+      href={href}
+      ref={ref}
+      onMouseMove={onMove}
+      onMouseLeave={onLeave}
+      className="px-8 py-3 rounded-xl font-medium bg-gradient-to-r from-cyan-500 to-indigo-500 text-black transition-transform duration-300 active:scale-95 active:brightness-110"
+    >
+      {children}
+    </Link>
+  );
+}
+
+function PriceCard({
+  title,
+  price,
+  features,
+  action,
+  href,
+  highlight,
+  badge,
+  hasSwitchedBilling,
+}: any) {
+
+  return (
+    <div
+      className={`relative backdrop-blur-xl rounded-2xl p-6 text-center border ${
+        highlight
+          ? "bg-white/15 border-cyan-400/40"
+          : "bg-white/5 border-white/10"
+      }`}
+    >
+      {/* BADGE */}
+      {badge && (
+        <span className="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-1 text-xs rounded-full bg-cyan-400 text-black font-medium">
+          {badge}
+        </span>
+      )}
+
+      <h4 className="font-semibold">{title}</h4>
+<div className="mt-2 h-[36px] flex justify-center items-center overflow-hidden">
+  {hasSwitchedBilling ? (
+    <AnimatePresence mode="wait">
+      <motion.p
+        key={price}
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: -10 }}
+        transition={{ duration: 0.25, ease: "easeOut" }}
+        className="text-2xl font-semibold"
+      >
+        {price}
+      </motion.p>
+    </AnimatePresence>
+  ) : (
+    <p className="text-2xl font-semibold">{price}</p>
+  )}
+</div>
+
+      <ul className="mt-4 space-y-2 text-sm text-white/70">
+        {features.map((f: string) => (
+          <li key={f}>✔ {f}</li>
+        ))}
+      </ul>
+
+      {href ? (
+        <Link
+          href={href}
+          className="inline-block mt-6 px-6 py-2 rounded-lg bg-white text-black font-medium"
+        >
+          {action}
+        </Link>
+      ) : (
+        <button className="mt-6 px-6 py-2 rounded-lg border border-white/20 text-white/60 cursor-not-allowed">
+          {action}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function HeroFeature({
+  icon,
+  title,
+  description,
+  isTouch,
+}: {
+  icon: string;
+  title: string;
+  description: string;
+  isTouch: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  /* Close on outside tap (mobile) */
+  useEffect(() => {
+    if (!open) return;
+
+    const onClick = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+
+    document.addEventListener("click", onClick);
+    return () => document.removeEventListener("click", onClick);
+  }, [open]);
+
+  return (
+    <div
+      ref={ref}
+      className="relative"
+      onMouseEnter={() => !isTouch && setOpen(true)}
+      onMouseLeave={() => !isTouch && setOpen(false)}
+      onClick={() => isTouch && setOpen(v => !v)}
+    >
+      {/* FEATURE CHIP */}
+      <div
+        className="
+          flex items-center justify-center gap-2 text-sm text-white/70
+          backdrop-blur-md bg-white/5 border border-white/10
+          rounded-xl py-3 cursor-default
+          transition-transform duration-200
+          hover:scale-[1.03]
+          active:scale-95
+        "
+      >
+        <span>{icon}</span>
+        <span>{title}</span>
+      </div>
+
+      {/* TOOLTIP */}
+      {open && (
+        <div
+          className="
+            absolute left-1/2 -translate-x-1/2 mt-3 w-72 z-50
+            backdrop-blur-xl bg-[#0E1320]/90
+            border border-white/10 rounded-xl p-4
+            text-sm text-white/80
+            shadow-xl
+            animate-fadeIn
+          "
+        >
+          {description}
+
+          {/* Tooltip arrow */}
+          <div className="absolute -top-2 left-1/2 -translate-x-1/2 w-4 h-4 bg-[#0E1320]/90 border-l border-t border-white/10 rotate-45" />
+        </div>
+      )}
+    </div>
+  );
+}
+function EngineCard({
+  title,
+  tag,
+  desc,
+  side,
+}: {
+  title: string;
+  tag: string;
+  desc: string;
+  side: "left" | "right";
+}) {
+ return (
+  <div
+    className="
+      relative group
+      w-80 h-44
+      flex flex-col justify-center
+      backdrop-blur-xl bg-white/5 border border-white/10
+      rounded-2xl p-6
+      transition-all duration-300
+      hover:scale-[1.04]
+      hover:border-cyan-400/40
+      hover:shadow-[0_0_35px_rgba(34,211,238,0.2)]
+    "
+  >
+   {/* CONNECTOR LINE */}
+<div
+  className={`
+    absolute top-1/2 hidden lg:block h-px w-24 overflow-hidden
+    ${side === "left"
+      ? "right-0 translate-x-full bg-gradient-to-r"
+      : "left-0 -translate-x-full bg-gradient-to-l"}
+    from-cyan-400/40 to-transparent
+  `}
+>
+
+  
+
+  {/* ENERGY FLOW */}
+ <span
+  className={`
+    absolute top-0 h-px w-8
+    ${side === "left" ? "left-0 animate-energy-left" : "right-0 animate-energy-right"}
+    bg-gradient-to-r from-transparent via-cyan-300 to-transparent
+  `}
+/>
+
+
+</div>
+
+
+
+    <div className="text-sm text-cyan-400 mb-1">{tag}</div>
+    <h4 className="font-semibold">{title}</h4>
+    <p className="mt-2 text-sm text-white/70">{desc}</p>
+  </div>
+);
+
+}
+function FAQItem({ q, a }: { q: string; a: string }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div
+      className={`
+        backdrop-blur-xl bg-white/5 border border-white/10
+        rounded-2xl p-6 cursor-pointer
+        transition-all duration-300
+        ${open ? "border-cyan-400/40 shadow-[0_0_30px_rgba(34,211,238,0.15)]" : ""}
+      `}
+      onClick={() => setOpen(v => !v)}
+    >
+      <div className="flex items-center justify-between">
+        <h4 className="font-medium text-white">{q}</h4>
+
+        <span
+          className={`
+            ml-4 text-cyan-300 transition-transform duration-300
+            ${open ? "rotate-45" : "rotate-0"}
+          `}
+        >
+          +
+        </span>
+      </div>
+
+      <div
+        className={`
+          overflow-hidden transition-all duration-300
+          ${open ? "max-h-40 mt-4 opacity-100" : "max-h-0 opacity-0"}
+        `}
+      >
+        <p className="text-sm text-white/70 leading-relaxed">
+          {a}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+
+
+function MultilingualAI VidexaInfo() {
+const content = [
+  {
+    lang: "English · Global",
+    region: "USA · UK · International",
+    text: `
+AI Videxa is an AI-powered academic productivity platform built for students.
+
+It helps you:
+• Create structured assignments with clear introductions and conclusions
+• Prepare research content with proper academic flow
+• Generate presentation-ready outlines
+• Convert content into clean, submission-ready PDFs
+• Maintain ethical academic standards
+
+AI Videxa is designed to support learning and understanding,
+not to replace genuine student effort.
+    `,
+  },
+
+  {
+    lang: "हिन्दी · भारत",
+    region: "CBSE · ICSE · विश्वविद्यालय",
+    text: `
+AI Videxa छात्रों के लिए बनाया गया एक AI आधारित अकादमिक सहायक है।
+
+इसकी मदद से आप:
+• सही प्रारूप में असाइनमेंट तैयार कर सकते हैं
+• विषयों को गहराई से समझ सकते हैं
+• परीक्षा के लिए संरचित उत्तर बना सकते हैं
+• PPT और PDF के लिए साफ़ कंटेंट तैयार कर सकते हैं
+
+AI Videxa सीखने को मजबूत बनाता है,
+न कि नकल को बढ़ावा देता है।
+    `,
+  },
+
+  {
+    lang: "Hinglish · India",
+    region: "Colleges · Competitive Exams",
+    text: `
+AI Videxa ek smart academic tool hai jo students ko better padhne mein help karta hai.
+
+Isse aap:
+• Assignments ko proper exam format mein bana sakte ho
+• Research topics ko clearly samajh sakte ho
+• PPT aur notes ke liye structured content paa sakte ho
+• Handwritten-style notes generate kar sakte ho
+
+AI Videxa ka focus learning aur understanding pe hai,
+shortcuts pe nahi.
+    `,
+  },
+
+  {
+    lang: "中文 · 中国",
+    region: "大学 · 学术研究",
+    text: `
+AI Videxa 是一款为学生设计的人工智能学术辅助平台。
+
+它可以帮助你：
+• 编写结构清晰的作业
+• 理解复杂的学术概念
+• 准备研究型内容
+• 生成适合提交的文档和演示结构
+• 遵守学术诚信原则
+
+AI Videxa 的目标是辅助学习，
+而不是替代学生的思考过程。
+    `,
+  },
+
+  {
+    lang: "日本語 · 日本",
+    region: "大学 · 専門教育",
+    text: `
+AI Videxa は学生向けに設計された学習支援AIツールです。
+
+主な機能：
+• 論理的で整理されたレポート作成
+• 学術的な内容理解の補助
+• プレゼンテーション構成の作成
+• 学習用ノートや資料の整理
+
+AI Videxa は学習の質を高めるためのツールであり、
+提出の代行ではありません。
+    `,
+  },
+
+  {
+    lang: "Deutsch · Europa",
+    region: "Universitäten · Forschung",
+    text: `
+AI Videxa ist eine KI-gestützte Plattform zur akademischen Unterstützung.
+
+Sie hilft Studierenden bei:
+• Strukturierter Erstellung von Hausarbeiten
+• Wissenschaftlicher Recherche und Argumentation
+• Vorbereitung von Präsentationen
+• Einhaltung akademischer Standards
+
+AI Videxa unterstützt den Lernprozess
+und fördert eigenständiges Denken.
+    `,
+  },
+
+  {
+    lang: "한국어 · 대한민국",
+    region: "대학교 · 시험 준비",
+    text: `
+AI Videxa는 학생을 위한 AI 기반 학습 지원 도구입니다.
+
+주요 기능:
+• 체계적인 과제 및 답안 구성
+• 개념 이해를 돕는 설명
+• 시험 및 발표 준비용 구조 제공
+• 학문적 윤리와 독창성 유지
+
+AI Videxa는 학습을 돕는 도구이며,
+과제를 대신 수행하지 않습니다.
+    `,
+  },
+];
+
+
+  const [index, setIndex] = useState(0);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setIndex(i => (i + 1) % content.length);
+    }, 7000); // slower = premium feel
+
+    return () => clearInterval(timer);
+  }, []);
+
+  return (
+    <div className="relative overflow-hidden">
+      <div
+        key={index}
+        className="
+          backdrop-blur-xl bg-white/5 border border-white/10
+          rounded-3xl p-8 md:p-10
+          text-white/80 leading-relaxed
+          animate-langSwap
+        "
+      >
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-sm text-cyan-300 tracking-wide">
+            {content[index].lang}
+          </div>
+          <div className="text-xs text-white/50">
+            {content[index].region}
+          </div>
+        </div>
+
+        <pre className="whitespace-pre-wrap text-sm md:text-base font-sans">
+          {content[index].text}
+        </pre>
+      </div>
+    </div>
+  );
+}
