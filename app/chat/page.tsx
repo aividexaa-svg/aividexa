@@ -11,7 +11,7 @@ import AdvancedResearchForm from "@/app/research/AdvancedResearchForm";
 import AdvancedPptForm from "@/app/ppt/AdvancedPptForm";
 import { useRouter } from "next/navigation";
 import PdfExportModal from "@/app/components/PdfExportModal";
-import HandwrittenExportModal from "@/app/handwritten/page";
+import HandwrittenExportModal from "@/app/components/HandwrittenExportModal";
 import HelpModal from "@/app/components/HelpModal";
 import { usePlan } from "@/hooks/usePlan";
 import { getAuth } from "firebase/auth";
