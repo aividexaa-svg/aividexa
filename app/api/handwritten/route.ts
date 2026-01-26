@@ -329,12 +329,16 @@ if (isFreeHandwritten) {
   const buffers: Buffer[] = [];
   doc.on("data", buffers.push.bind(buffers));
   doc.end();
-
-  return new Promise((resolve) => {
+  return new Promise<Response>((resolve) => {
     doc.on("end", () => {
+      const pdfBuffer = Buffer.concat(buffers);
+
       resolve(
-        new NextResponse(Buffer.concat(buffers), {
-          headers: { "Content-Type": "application/pdf" },
+        new Response(pdfBuffer, {
+          headers: {
+            "Content-Type": "application/pdf",
+            "Content-Disposition": "inline; filename=handwritten.pdf",
+          },
         })
       );
     });
