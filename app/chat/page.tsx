@@ -2700,13 +2700,13 @@ disabled={!pptTopic.trim()}
 
 
 {/* MAIN LAYOUT */}
-<div className="flex h-screen w-full bg-[#0E0E0F] text-white overflow-hidden">
+<div className="flex h-screen w-full bg-[#0E0E0F] text-white overflow-hidden blur-fix">
 
   {/* MAIN CHAT AREA */}
 <main className="relative flex flex-col flex-1 min-h-0 min-w-0">
 
     {/* Header */}
-<div className="relative flex items-center gap-3 px-4 py-4 border-b border-white/10">
+<div className="relative flex items-center gap-3 px-4 py-4 border-b border-white/10 blur-fix">
      <button
   onClick={() => setSidebarOpen(prev => !prev)}
   className="
@@ -2763,7 +2763,7 @@ disabled={!pptTopic.trim()}
       {/* Messages + Auto Scroll */} 
 <div
   ref={messagesContainerRef}
-  className="flex-1 min-h-0 overflow-y-scroll px-6 py-6 custom-scroll scrollbar-stable"
+  className="flex-1 min-h-0 overflow-y-scroll px-6 py-6 custom-scroll scrollbar-stable blur-fix"
 >
 
 <div className="w-full max-w-[680px] mx-auto px-4 space-y-8">
@@ -2776,11 +2776,12 @@ disabled={!pptTopic.trim()}
 <div className="relative flex flex-col items-center justify-center py-24 w-full text-center">
 
         {/* Sparkle glow */}
-        <div className="absolute animate-pulse opacity-40">
-          <div className="w-48 h-48 bg-purple-500/20 blur-3xl rounded-full"></div>
-          <div className="w-32 h-32 bg-pink-500/20 blur-2xl rounded-full absolute top-10 left-10"></div>
-          <div className="w-24 h-24 bg-blue-500/20 blur-2xl rounded-full absolute -top-5 right-5"></div>
-        </div>
+        <div className="absolute animate-pulse opacity-40 blur-fix">
+  <div className="w-48 h-48 bg-purple-500/20 blur-3xl rounded-full"></div>
+  <div className="w-32 h-32 bg-pink-500/20 blur-2xl rounded-full absolute top-10 left-10"></div>
+  <div className="w-24 h-24 bg-blue-500/20 blur-2xl rounded-full absolute -top-5 right-5"></div>
+</div>
+
 
         {/* lowered center */}
         <div className="translate-y-10 flex flex-col items-center">
@@ -2925,7 +2926,7 @@ disabled={!pptTopic.trim()}
     </div>
 
     {/* Typing bubble */}
-    <div className="bg-[#1A1A1D] border border-white/10 px-5 py-3 rounded-2xl shadow-lg backdrop-blur-md">
+<div className="bg-[#1A1A1D] border border-white/10 px-5 py-3 rounded-2xl shadow-lg backdrop-blur-md blur-fix">
       <div className="flex items-center gap-2">
         <span className="w-2.5 h-2.5 bg-white/70 rounded-full animate-typingDot"></span>
         <span className="w-2.5 h-2.5 bg-white/70 rounded-full animate-typingDot delay-150"></span>
@@ -3039,7 +3040,7 @@ disabled={!pptTopic.trim()}
   className={`
     fixed top-0 right-0 z-[999]
     h-screen w-64
-    bg-black/40 backdrop-blur-xl
+    bg-black/40 backdrop-blur-xl blur-fix
     border-l border-white/10
     flex flex-col overflow-hidden
     transition-transform duration-300 ease-out

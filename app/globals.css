@@ -2,92 +2,83 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Light mode */
+/* ===============================
+ROOT COLORS
+================================ */
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #000000;
+  --foreground: #ededed;
 }
 
-/* Dark mode */
-@media (prefers-color-scheme: dark) {
+@media (prefers-color-scheme: light) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --background: #ffffff;
+    --foreground: #171717;
   }
 }
 
+/* ===============================
+BASE RESET (SAFE)
+================================ */
 
-html, body {
-  background: transparent; /* 🔑 KEY FIX */
+html,
+body,
+#__next {
+  width: 100%;
+  height: auto;
+  background: transparent;
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
   overflow-x: hidden;
+  overflow-y: auto;
 }
 
-
-@keyframes fadeIn {
-  0% { opacity: 0; transform: translateY(10px); }
-  100% { opacity: 1; transform: translateY(0); }
-}
-@keyframes fadeIn {
-  0% { opacity: 0; transform: translateY(10px); }
-  100% { opacity: 1; transform: translateY(0); }
+html,
+body {
+  overflow-y: auto !important;
 }
 
-.animate-fadeIn {
-  animation: fadeIn 0.6s ease-out;
-}
-.glow {
-  animation: glowPulse 2.5s ease-in-out infinite;
+/* ===============================
+BACKGROUND STABILITY FIX
+================================ */
+
+html,
+body {
+  background-color: var(--background);
 }
 
-@keyframes glowPulse {
-  0% { text-shadow: 0 0 10px rgba(168,85,247,0.4); }
-  50% { text-shadow: 0 0 24px rgba(236,72,153,0.6); }
-  100% { text-shadow: 0 0 10px rgba(168,85,247,0.4); }
+/* ===============================
+SCROLL BEHAVIOR (SAFE)
+================================ */
+
+html {
+  scroll-behavior: auto;
 }
 
-@keyframes profilePopup {
-  0% {
-    opacity: 0;
-    transform: translateY(10px) scale(0.92);
+/* Mobile-only scroll physics */
+@media (hover: none) and (pointer: coarse) {
+  body {
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: none;
   }
-  60% {
-    opacity: 1;
-    transform: translateY(-2px) scale(1.03);
-  }
-  100% {
-    opacity: 1;
-    transform: translateY(0) scale(1);
+
+  * {
+    touch-action: pan-y;
   }
 }
 
-.animate-profilePopup {
-  animation: profilePopup 0.26s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+/* ===============================
+FONT RENDERING
+================================ */
+
+* {
+  -webkit-font-smoothing: antialiased;
 }
 
-.overflow-wrap-anywhere {
-  overflow-wrap: anywhere;
-}
-
-@keyframes fadeIn {
-  0% { opacity: 0; transform: translateY(10px); }
-  100% { opacity: 1; transform: translateY(0); }
-}
-
-@keyframes fadeInSlow {
-  0% { opacity: 0; }
-  100% { opacity: 1; }
-}
-
-.animate-fadeIn {
-  animation: fadeIn .6s ease-out;
-}
-
-.animate-fadeInSlow {
-  animation: fadeInSlow 1s ease-out;
-}
-/* ===== Global Dark Scrollbar ===== */
+/* ===============================
+SAFE SCROLLBAR STYLING
+================================ */
 
 /* Firefox */
 * {
@@ -114,106 +105,32 @@ html, body {
 *::-webkit-scrollbar-thumb:hover {
   background-color: #3a3a3f;
 }
-@keyframes advancedSlideIn {
-  from {
-    opacity: 0;
-    transform: translateX(40px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
-}
 
-.animate-advancedSlideIn {
-  animation: advancedSlideIn 0.3s ease-out;
-}
-@keyframes advancedEnter {
-  from {
-    opacity: 0;
-    transform: translateY(12px) scale(0.98);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
-
-.animate-advancedEnter {
-  animation: advancedEnter 0.35s ease-out;
-}
-@keyframes modalFadeIn {
-  from {
-    opacity: 0;
-    transform: scale(0.96) translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1) translateY(0);
-  }
-}
-
-@keyframes modalFadeOut {
-  from {
-    opacity: 1;
-    transform: scale(1);
-  }
-  to {
-    opacity: 0;
-    transform: scale(0.96);
-  }
-}
-
-@keyframes backdropFade {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-
-.animate-modalIn {
-  animation: modalFadeIn 0.25s ease-out forwards;
-}
-
-.animate-backdrop {
-  animation: backdropFade 0.2s ease-out forwards;
-}
-/* ===== PREMIUM ANIMATIONS ===== */
+/* ===============================
+PREMIUM BACKGROUND ANIMATIONS
+================================ */
 
 @keyframes gradientMove {
-  0% {
-    background-position: 0% 50%;
-  }
-  50% {
-    background-position: 100% 50%;
-  }
-  100% {
-    background-position: 0% 50%;
-  }
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
 }
 
 @keyframes floatSlow {
-  0% {
-    transform: translateY(0px) translateX(0px);
-  }
-  50% {
-    transform: translateY(-40px) translateX(20px);
-  }
-  100% {
-    transform: translateY(0px) translateX(0px);
-  }
+  0% { transform: translateY(0px) translateX(0px); }
+  50% { transform: translateY(-40px) translateX(20px); }
+  100% { transform: translateY(0px) translateX(0px); }
 }
 
-/* 🔥 DISABLE GRID BACKGROUND ANIMATION */
 @keyframes gridMove {
   from { background-position: 0 0; }
-  to { background-position: 0 0; }
+  to   { background-position: 0 0; }
 }
 
+/* ===============================
+NOISE OVERLAY (SAFE)
+================================ */
 
-/* Noise overlay */
 .noise::before {
   content: "";
   position: absolute;
@@ -222,17 +139,35 @@ html, body {
   pointer-events: none;
 }
 
-/* ===== HERO UNDERLINE ANIMATION ===== */
+/* ===============================
+FADE / MICRO ANIMATIONS
+================================ */
+
+@keyframes fadeIn {
+  0% { opacity: 0; transform: translateY(10px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeInSlow {
+  0% { opacity: 0; }
+  100% { opacity: 1; }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.6s ease-out;
+}
+
+.animate-fadeInSlow {
+  animation: fadeInSlow 1s ease-out;
+}
+
+/* ===============================
+HERO UNDERLINE
+================================ */
 
 @keyframes underlineDraw {
-  from {
-    transform: scaleX(0);
-    opacity: 0;
-  }
-  to {
-    transform: scaleX(1);
-    opacity: 1;
-  }
+  from { transform: scaleX(0); opacity: 0; }
+  to   { transform: scaleX(1); opacity: 1; }
 }
 
 .hero-underline {
@@ -257,24 +192,17 @@ html, body {
   transform: scaleX(0);
   opacity: 0;
   animation: underlineDraw 0.9s ease-out forwards;
-  animation-delay: 0.5s; /* subtle delay = premium */
+  animation-delay: 0.5s;
 }
-/* =====================================================
-   LIVING ACADEMIC CANVAS STYLES
-===================================================== */
+
+/* ===============================
+LIVING ACADEMIC CANVAS
+================================ */
 
 @keyframes academicFade {
-  0% {
-    opacity: 0;
-    transform: translateY(6px);
-  }
-  50% {
-    opacity: 0.35;
-  }
-  100% {
-    opacity: 0;
-    transform: translateY(-6px);
-  }
+  0% { opacity: 0; transform: translateY(6px); }
+  50% { opacity: 0.35; }
+  100% { opacity: 0; transform: translateY(-6px); }
 }
 
 .academic-block {
@@ -303,13 +231,11 @@ html, body {
   animation: academicFade 6s ease-in-out infinite;
 }
 
-/* STAGGERED DELAYS */
 .delay-1 { animation-delay: 0.5s; }
 .delay-2 { animation-delay: 1.5s; }
 .delay-3 { animation-delay: 2.5s; }
 .delay-4 { animation-delay: 3.5s; }
 
-/* MOBILE SAFETY */
 @media (max-width: 768px) {
   .academic-block,
   .academic-line,
@@ -318,241 +244,51 @@ html, body {
     animation-duration: 12s;
   }
 }
-@keyframes energy-left {
-  0% {
-    transform: translateX(0);
-    opacity: 0;
-  }
-  20% {
-    opacity: 1;
-  }
-  80% {
-    opacity: 1;
-  }
-  100% {
-    transform: translateX(100%);
-    opacity: 0;
-  }
-}
 
-@keyframes energy-right {
-  0% {
-    transform: translateX(0);
-    opacity: 0;
-  }
-  20% {
-    opacity: 1;
-  }
-  80% {
-    opacity: 1;
-  }
-  100% {
-    transform: translateX(-100%);
-    opacity: 0;
-  }
-}
+/* ===============================
+TOOLTIP / MICRO EFFECTS
+================================ */
 
-
-
-@media (hover: none) {
-  .animate-energy {
-    animation: none;
-  }
-}
 @keyframes langSwap {
-  0% {
-    opacity: 0;
-    transform: translateY(16px);
-  }
-  20% {
-    opacity: 1;
-    transform: translateY(0);
-  }
-  80% {
-    opacity: 1;
-    transform: translateY(0);
-  }
-  100% {
-    opacity: 0;
-    transform: translateY(-16px);
-  }
+  0% { opacity: 0; transform: translateY(16px); }
+  20% { opacity: 1; transform: translateY(0); }
+  80% { opacity: 1; transform: translateY(0); }
+  100% { opacity: 0; transform: translateY(-16px); }
 }
 
 .animate-langSwap {
   animation: langSwap 7s ease-in-out forwards;
 }
-@keyframes priceSwap {
-  0% {
-    opacity: 0;
-    transform: translateY(4px) scale(0.98);
-  }
-  100% {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
+
+@keyframes typingDot {
+  0% { opacity: 0.2; transform: translateY(0); }
+  20% { opacity: 1; transform: translateY(-3px); }
+  40% { opacity: 0.2; transform: translateY(0); }
+  100% { opacity: 0.2; }
 }
 
-.animate-priceSwap {
-  animation: priceSwap 0.35s ease-out;
-}
-/* ===== ACADEMIC ENGINE CORE ===== */
-
-@keyframes core-breathe {
-  0%, 100% {
-    opacity: 0.35;
-    transform: scale(0.94);
-  }
-  50% {
-    opacity: 0.8;
-    transform: scale(1.06);
-  }
+.animate-typingDot {
+  animation: typingDot 1.4s infinite ease-in-out both;
 }
 
-@keyframes core-ripple {
-  0% {
-    transform: scale(0.6);
-    opacity: 0.65;
-  }
-  100% {
-    transform: scale(1.45);
-    opacity: 0;
-  }
-}
-@keyframes coreSync {
-  0%, 100% {
-    box-shadow: 0 0 30px rgba(34,211,238,0.25);
-  }
-  50% {
-    box-shadow: 0 0 55px rgba(34,211,238,0.45);
-  }
-}
+.delay-150 { animation-delay: 0.15s; }
+.delay-300 { animation-delay: 0.3s; }
 
 /* ===============================
-   AI Videxa ENGINE FLOW (PREMIUM)
+BACKDROP BLUR (SAFE)
 ================================ */
 
-.engine-line {
-  background: linear-gradient(
-    to bottom,
-    transparent,
-    rgba(34, 211, 238, 0.25),
-    transparent
-  );
-  opacity: 0.6;
+.backdrop-blur,
+.backdrop-blur-xl,
+.backdrop-blur-md {
+  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px);
+  isolation: isolate;
 }
 
-/* tiny moving light */
-.engine-dot {
-  position: absolute;
-  left: -1px;
-  width: 3px;
-  height: 24px;
-  background: rgba(34, 211, 238, 0.9);
-  filter: blur(2px);
-  border-radius: 4px;
-  animation: flowDown 6s linear infinite;
-  opacity: 0.7;
-}
-
-/* stagger */
-.delay-1 { animation-delay: 0s; }
-.delay-2 { animation-delay: 2s; }
-.delay-3 { animation-delay: 4s; }
-
-@keyframes flowDown {
-  0% {
-    top: -30px;
-    opacity: 0;
-  }
-  10% {
-    opacity: 0.6;
-  }
-  90% {
-    opacity: 0.6;
-  }
-  100% {
-    top: 110%;
-    opacity: 0;
-  }
-}
 /* ===============================
-   ENGINE SVG CONNECTORS (FINAL)
+FORM STYLES
 ================================ */
-
-
-/* Core breathing (subtle) */
-@keyframes corePulse {
-  0%, 100% {
-    box-shadow: 0 0 70px rgba(34,211,238,0.18);
-  }
-  50% {
-    box-shadow: 0 0 95px rgba(34,211,238,0.32);
-  }
-}
-/* 🔥 DISABLE ENGINE CONNECTOR DOT LINES */
-.engine-curve {
-  fill: none;
-  stroke: rgba(255, 255, 255, 0.08);
-  stroke-width: 1;
-  stroke-linecap: round;
-  stroke-dasharray: none;   /* 🔥 removes dotted look */
-  animation: none;          /* 🔥 stops motion */
-}
-
-
-
-@keyframes flow {
-  from { stroke-dashoffset: 140; opacity: 0.4; }
-  to { stroke-dashoffset: 0; opacity: 1; }
-}
-
-
-@keyframes counterPop {
-  0% {
-    transform: scale(0.9);
-    opacity: 0.6;
-  }
-  50% {
-    transform: scale(1.08);
-    opacity: 1;
-  }
-  100% {
-    transform: scale(1);
-  }
-}
-
-@keyframes shakeRed {
-  0%,
-  100% {
-    transform: translateX(0);
-  }
-  20% {
-    transform: translateX(-4px);
-  }
-  40% {
-    transform: translateX(4px);
-  }
-  60% {
-    transform: translateX(-3px);
-  }
-  80% {
-    transform: translateX(3px);
-  }
-}
-
-.animate-counter {
-  animation: counterPop 0.35s ease-out;
-}
-
-.animate-shake-red {
-  animation: shakeRed 0.4s ease-in-out;
-}
-
-
-
-/* ===============================
-   AI Videxa – Premium Form Styles
-   =============================== */
 
 .clean-input {
   @apply w-full rounded-xl bg-black/30
@@ -569,9 +305,6 @@ html, body {
   px-3 py-2 text-white
   outline-none;
 }
-/* ===============================
-   Dark Select Dropdown (Premium)
-   =============================== */
 
 .select-dark {
   background-color: #000;
@@ -582,35 +315,19 @@ html, body {
   background-color: #000 !important;
   color: #fff !important;
 }
-/* styles/chat.css */
-.prompt-blur {
-  filter: blur(6px);
-  pointer-events: none;
-  user-select: none;
-  opacity: 0.4;
-}
-/* 🔥 Kill ONLY engine background SVG */
-svg.engine-svg,
-.engine-curve,
-.engine-line,
-.engine-dot {
-  display: none !important;
-}
-@keyframes typingDot {
-  0% { opacity: 0.2; transform: translateY(0); }
-  20% { opacity: 1; transform: translateY(-3px); }
-  40% { opacity: 0.2; transform: translateY(0); }
-  100% { opacity: 0.2; }
+@media (max-width: 768px) {
+  .backdrop-blur,
+  .backdrop-blur-xl,
+  .backdrop-blur-md {
+    -webkit-backdrop-filter: blur(6px);
+    backdrop-filter: blur(6px);
+  }
 }
 
-.animate-typingDot {
-  animation: typingDot 1.4s infinite ease-in-out both;
-}
-
-.delay-150 {
-  animation-delay: 0.15s;
-}
-
-.delay-300 {
-  animation-delay: 0.3s;
-}
+/* ===============================
+SAFE GUARDS
+(NO global translateZ)
+(NO overflow hidden)
+(NO 3D stacking contexts)
+(NO will-change globally)
+================================ */

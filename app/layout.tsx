@@ -19,19 +19,23 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className="antialiased">
-        <AuthProvider>
+      <body className="antialiased bg-transparent">
 
-          {/* 🔥 COOKIE CONTEXT MUST WRAP EVERYTHING */}
+        <AuthProvider>
           <CookieProvider>
-            {children}
+
+            {/* 🔥 STABLE APP ROOT */}
+            <div className="relative min-h-screen z-0">
+              {children}
+            </div>
 
             {/* global cookie UI */}
             <CookieBanner />
             <CookiePreferencesModal />
-          </CookieProvider>
 
+          </CookieProvider>
         </AuthProvider>
+
       </body>
     </html>
   );

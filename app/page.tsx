@@ -48,17 +48,7 @@ const onFooterMouseMove = (e: React.MouseEvent) => {
   }, []);
 
   /* ===== SCROLL DEPTH PARALLAX ===== */
-  useEffect(() => {
-    const onScroll = () => {
-      if (!bgRef.current) return;
-      const y = window.scrollY;
-      const intensity = window.innerWidth < 768 ? 0.05 : 0.15;
-      bgRef.current.style.transform = `translateY(${y * intensity}px)`;
-    };
-
-    window.addEventListener("scroll", onScroll, { passive: true });
-    return () => window.removeEventListener("scroll", onScroll);
-  }, []);
+  
 
   return (
     <main className="relative min-h-screen text-white overflow-hidden">
@@ -66,17 +56,18 @@ const onFooterMouseMove = (e: React.MouseEvent) => {
       {/* =====================================================
          PREMIUM ANIMATED BACKGROUND
       ===================================================== */}
-      <div
-        ref={bgRef}
-        className="absolute inset-0 -z-10 overflow-hidden noise pointer-events-none will-change-transform"
-      >
+<div
+  ref={bgRef}
+  className="fixed inset-0 -z-10 overflow-hidden noise pointer-events-none"
+>
+
         <div
           className="absolute inset-0"
           style={{
             background:
               "linear-gradient(135deg, #0A0D12, #10162A, #05070C)",
             backgroundSize: "400% 400%",
-            animation: "gradientMove 30s ease infinite",
+            animation: isTouch ? "none" : "gradientMove 30s ease infinite",
           }}
         />
 
@@ -86,17 +77,17 @@ const onFooterMouseMove = (e: React.MouseEvent) => {
             backgroundImage:
               "linear-gradient(rgba(255,255,255,0.15) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.15) 1px, transparent 1px)",
             backgroundSize: "40px 40px",
-            animation: "gridMove 45s linear infinite",
+            animation: isTouch ? "none" : "gridMove 45s linear infinite",
           }}
         />
 
         <div
           className="absolute w-[600px] h-[600px] bg-cyan-400/10 rounded-full blur-[140px] -top-40 -left-40"
-          style={{ animation: "floatSlow 35s ease-in-out infinite" }}
+          style={{animation: isTouch ? "none" : "floatSlow 35s ease-in-out infinite" }}
         />
         <div
           className="absolute w-[500px] h-[500px] bg-indigo-500/10 rounded-full blur-[140px] -bottom-40 -right-40"
-          style={{ animation: "floatSlow 40s ease-in-out infinite" }}
+          style={{animation: isTouch ? "none" : "floatSlow 40s ease-in-out infinite" }}
         />
       </div>
 
