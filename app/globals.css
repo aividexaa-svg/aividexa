@@ -65,14 +65,14 @@ html {
   scroll-behavior: auto;
 }
 
-/* Only apply mobile physics to BODY */
+/* Mobile-safe touch behavior */
 @media (hover: none) and (pointer: coarse) {
   body {
     -webkit-overflow-scrolling: touch;
-    overscroll-behavior-y: none;
+    overscroll-behavior-y: auto;  /* ✅ allow native scroll */
   }
 
-  /* Allow taps & interactions */
+  /* Allow all taps & interactions */
   a,
   button,
   input,
@@ -82,11 +82,12 @@ html {
     touch-action: manipulation;
   }
 
-  /* Only restrict actual scroll containers */
+  /* Do NOT restrict global containers */
   .scroll-container {
-    touch-action: pan-y;
+    touch-action: auto;           /* ✅ restore taps */
   }
 }
+
 
 /* ===============================
 SAFE SCROLLBAR STYLING

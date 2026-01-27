@@ -54,9 +54,15 @@ const onFooterMouseMove = (e: React.MouseEvent) => {
 
 
   /* ===== DETECT TOUCH DEVICE (SAFE) ===== */
-  useEffect(() => {
-    setIsTouch(window.matchMedia("(hover: none)").matches);
-  }, []);
+useEffect(() => {
+  const isMobile =
+    typeof window !== "undefined" &&
+    ("ontouchstart" in window ||
+      navigator.maxTouchPoints > 0 ||
+      window.matchMedia("(pointer: coarse)").matches);
+
+  setIsTouch(isMobile);
+}, []);
 
   useEffect(() => {
   if (!isTouch) return;
@@ -72,15 +78,17 @@ const onFooterMouseMove = (e: React.MouseEvent) => {
   
 
   return (
-<main className="relative min-h-screen text-white overflow-hidden scroll-container">
+<main className="relative min-h-screen text-white">
 
       {/* =====================================================
          PREMIUM ANIMATED BACKGROUND
       ===================================================== */}
 <div
   ref={bgRef}
-  className="fixed inset-0 -z-10 overflow-hidden noise pointer-events-none"
+  className="fixed inset-0 -z-10 overflow-hidden noise"
+  style={{ pointerEvents: "none" }}
 >
+
 
         <div
           className="absolute inset-0"
