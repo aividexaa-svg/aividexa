@@ -7,13 +7,13 @@ ROOT COLORS
 ================================ */
 
 :root {
-  --background: #000000;
+  --background: transparent; /* keep animated bg visible */
   --foreground: #ededed;
 }
 
 @media (prefers-color-scheme: light) {
   :root {
-    --background: #ffffff;
+    --background: transparent;
     --foreground: #171717;
   }
 }
@@ -36,16 +36,25 @@ body,
 
 html,
 body {
-  overflow-y: auto !important;
+  overflow-y: auto !important; /* guarantee PC scroll */
 }
 
 /* ===============================
-BACKGROUND STABILITY FIX
+FONT RENDERING
 ================================ */
 
+* {
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ===============================
+BACKGROUND STABILITY (SAFE)
+================================ */
+
+/* DO NOT override animated background */
 html,
 body {
-  background-color: var(--background);
+  background-color: transparent;
 }
 
 /* ===============================
@@ -56,24 +65,27 @@ html {
   scroll-behavior: auto;
 }
 
-/* Mobile-only scroll physics */
+/* Only apply mobile physics to BODY */
 @media (hover: none) and (pointer: coarse) {
   body {
     -webkit-overflow-scrolling: touch;
     overscroll-behavior-y: none;
   }
 
-  * {
+  /* Allow taps & interactions */
+  a,
+  button,
+  input,
+  textarea,
+  select,
+  [role="button"] {
+    touch-action: manipulation;
+  }
+
+  /* Only restrict actual scroll containers */
+  .scroll-container {
     touch-action: pan-y;
   }
-}
-
-/* ===============================
-FONT RENDERING
-================================ */
-
-* {
-  -webkit-font-smoothing: antialiased;
 }
 
 /* ===============================
@@ -286,6 +298,16 @@ BACKDROP BLUR (SAFE)
   isolation: isolate;
 }
 
+/* Mobile: reduce blur for performance */
+@media (max-width: 768px) {
+  .backdrop-blur,
+  .backdrop-blur-xl,
+  .backdrop-blur-md {
+    -webkit-backdrop-filter: blur(6px);
+    backdrop-filter: blur(6px);
+  }
+}
+
 /* ===============================
 FORM STYLES
 ================================ */
@@ -314,14 +336,6 @@ FORM STYLES
 .select-dark option {
   background-color: #000 !important;
   color: #fff !important;
-}
-@media (max-width: 768px) {
-  .backdrop-blur,
-  .backdrop-blur-xl,
-  .backdrop-blur-md {
-    -webkit-backdrop-filter: blur(6px);
-    backdrop-filter: blur(6px);
-  }
 }
 
 /* ===============================

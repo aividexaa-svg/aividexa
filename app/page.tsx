@@ -23,8 +23,17 @@ const [hasSwitchedBilling, setHasSwitchedBilling] = useState(false);
 /* ===== FOOTER HORIZON INTERACTION ===== */
 const { scrollYProgress } = useScroll();
 
-const horizonScale = useTransform(scrollYProgress, [0.6, 1], [0.9, 1.08]);
-const horizonOpacity = useTransform(scrollYProgress, [0.6, 1], [0.18, 0.32]);
+const horizonScale = useTransform(
+  scrollYProgress,
+  [0.6, 1],
+  isTouch ? [1, 1] : [0.9, 1.08]
+);
+
+const horizonOpacity = useTransform(
+  scrollYProgress,
+  [0.6, 1],
+  isTouch ? [0.22, 0.22] : [0.18, 0.32]
+);
 
 // Mouse movement (VERY subtle)
 const mouseX = useMotionValue(0);
@@ -34,6 +43,8 @@ const horizonX = useTransform(mouseX, [-0.5, 0.5], ["-3%", "3%"]);
 const horizonY = useTransform(mouseY, [-0.5, 0.5], ["-2%", "2%"]);
 
 const onFooterMouseMove = (e: React.MouseEvent) => {
+  if (isTouch) return; // 🔥 prevent mobile lag
+
   const rect = e.currentTarget.getBoundingClientRect();
   mouseX.set((e.clientX - rect.left) / rect.width - 0.5);
   mouseY.set((e.clientY - rect.top) / rect.height - 0.5);
@@ -47,11 +58,21 @@ const onFooterMouseMove = (e: React.MouseEvent) => {
     setIsTouch(window.matchMedia("(hover: none)").matches);
   }, []);
 
+  useEffect(() => {
+  if (!isTouch) return;
+
+  // Lock scroll motion values on mobile
+  mouseX.set(0);
+  mouseY.set(0);
+
+}, [isTouch]);
+
+
   /* ===== SCROLL DEPTH PARALLAX ===== */
   
 
   return (
-    <main className="relative min-h-screen text-white overflow-hidden">
+<main className="relative min-h-screen text-white overflow-hidden scroll-container">
 
       {/* =====================================================
          PREMIUM ANIMATED BACKGROUND
