@@ -887,45 +887,16 @@ useEffect(() => {
   setCurrentUser(user);
 }, [user]);
 
+
 useEffect(() => {
-  const root = document.getElementById("app-scroll-root");
-  if (!root) return;
-
-  const shouldLock =
-    settingsOpen ||
-    editProfileOpen ||
-    assignmentOpen ||
-    researchOpen ||
-    pptOpen ||
-    writingOpen ||
-    pdfOpen ||
-    handwrittenOpen ||
-    helpOpen;
-
-  if (shouldLock) {
-    root.style.pointerEvents = "none";
-    root.style.touchAction = "none";
-  } else {
-    root.style.pointerEvents = "auto";
-    root.style.touchAction = "auto";
-  }
+  document.documentElement.style.overflow = "hidden";
+  document.body.style.overflow = "hidden";
 
   return () => {
-    root.style.pointerEvents = "auto";
-    root.style.touchAction = "auto";
+    document.documentElement.style.overflow = "";
+    document.body.style.overflow = "";
   };
-}, [
-  settingsOpen,
-  editProfileOpen,
-  assignmentOpen,
-  researchOpen,
-  pptOpen,
-  writingOpen,
-  pdfOpen,
-  handwrittenOpen,
-  helpOpen,
-]);
-
+}, []);
 
 useEffect(() => {
   const pending = sessionStorage.getItem("pendingPrompt");
@@ -2729,13 +2700,10 @@ disabled={!pptTopic.trim()}
 
 
 {/* MAIN LAYOUT */}
-<div className="flex min-h-[100svh] w-full bg-[#0E0E0F] text-white overflow-x-hidden blur-fix">
+<div className="flex h-screen w-full bg-[#0E0E0F] text-white overflow-hidden blur-fix">
 
   {/* MAIN CHAT AREA */}
-<main
-  id="app-scroll-root"
-  className="relative flex flex-col flex-1 min-h-0 min-w-0 overflow-y-auto"
->
+<main className="relative flex flex-col flex-1 min-h-0 min-w-0">
 
     {/* Header */}
 <div className="relative flex items-center gap-3 px-4 py-4 border-b border-white/10 blur-fix">
