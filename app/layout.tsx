@@ -18,25 +18,26 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
-      <body className="antialiased bg-transparent">
+    <html lang="en" className="bg-[#020617]">
+  <body className="antialiased bg-transparent min-h-[100dvh] overflow-x-hidden">
 
-        <AuthProvider>
-          <CookieProvider>
+    <AuthProvider>
+      <CookieProvider>
 
-            {/* 🔥 STABLE APP ROOT */}
-            <div className="relative min-h-screen z-0">
-              {children}
-            </div>
+        {/* 🔥 STABLE APP ROOT */}
+        <div className="relative min-h-[100dvh] z-0">
+          {children}
+        </div>
 
-            {/* global cookie UI */}
-            <CookieBanner />
-            <CookiePreferencesModal />
+        {/* global cookie UI */}
+        <CookieBanner />
+        <CookiePreferencesModal />
 
-          </CookieProvider>
-        </AuthProvider>
+      </CookieProvider>
+    </AuthProvider>
 
-      </body>
-    </html>
+  </body>
+</html>
+
   );
 }

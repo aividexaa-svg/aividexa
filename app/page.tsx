@@ -78,7 +78,7 @@ useEffect(() => {
   
 
   return (
-<main className="relative min-h-screen text-white">
+<main className="relative min-h-[100dvh] text-white">
 
       {/* =====================================================
          PREMIUM ANIMATED BACKGROUND
