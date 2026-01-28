@@ -889,14 +889,38 @@ useEffect(() => {
 
 
 useEffect(() => {
-  document.documentElement.style.overflow = "hidden";
-  document.body.style.overflow = "hidden";
+  const shouldLock =
+    settingsOpen ||
+    editProfileOpen ||
+    assignmentOpen ||
+    researchOpen ||
+    pptOpen ||
+    writingOpen ||
+    pdfOpen ||
+    handwrittenOpen ||
+    helpOpen;
+
+  if (shouldLock) {
+    document.body.style.overflow = "hidden";
+  } else {
+    document.body.style.overflow = "";
+  }
 
   return () => {
-    document.documentElement.style.overflow = "";
     document.body.style.overflow = "";
   };
-}, []);
+}, [
+  settingsOpen,
+  editProfileOpen,
+  assignmentOpen,
+  researchOpen,
+  pptOpen,
+  writingOpen,
+  pdfOpen,
+  handwrittenOpen,
+  helpOpen,
+]);
+
 
 useEffect(() => {
   const pending = sessionStorage.getItem("pendingPrompt");
@@ -2700,7 +2724,7 @@ disabled={!pptTopic.trim()}
 
 
 {/* MAIN LAYOUT */}
-<div className="flex h-screen w-full bg-[#0E0E0F] text-white overflow-hidden blur-fix">
+<div className="flex min-h-screen w-full bg-[#0E0E0F] text-white overflow-x-hidden blur-fix">
 
   {/* MAIN CHAT AREA */}
 <main className="relative flex flex-col flex-1 min-h-0 min-w-0">

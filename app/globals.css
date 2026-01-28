@@ -3,40 +3,42 @@
 @tailwind utilities;
 
 /* ===============================
-ROOT COLORS
+ROOT COLORS (SAFE)
 ================================ */
 
 :root {
-  --background: transparent; /* keep animated bg visible */
+  --background: #05070c; /* 🔥 mobile-safe fallback */
   --foreground: #ededed;
 }
 
 @media (prefers-color-scheme: light) {
   :root {
-    --background: transparent;
+    --background: #ffffff;
     --foreground: #171717;
   }
 }
 
 /* ===============================
-BASE RESET (SAFE)
+BASE RESET (UNIVERSAL)
 ================================ */
 
 html,
 body,
 #__next {
   width: 100%;
-  height: auto;
-  background: transparent;
+  min-height: 100%;
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
   overflow-x: hidden;
   overflow-y: auto;
 }
 
+/* 🔥 CRITICAL: NEVER TRANSPARENT */
 html,
 body {
-  overflow-y: auto !important; /* guarantee PC scroll */
+  background-color: var(--background);
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: auto;
 }
 
 /* ===============================
@@ -48,16 +50,6 @@ FONT RENDERING
 }
 
 /* ===============================
-BACKGROUND STABILITY (SAFE)
-================================ */
-
-/* DO NOT override animated background */
-html,
-body {
-  background-color: transparent;
-}
-
-/* ===============================
 SCROLL BEHAVIOR (SAFE)
 ================================ */
 
@@ -65,14 +57,12 @@ html {
   scroll-behavior: auto;
 }
 
-/* Mobile-safe touch behavior */
+/* Mobile touch fix */
 @media (hover: none) and (pointer: coarse) {
   body {
-    -webkit-overflow-scrolling: touch;
-    overscroll-behavior-y: auto;  /* ✅ allow native scroll */
+    overscroll-behavior-y: auto;
   }
 
-  /* Allow all taps & interactions */
   a,
   button,
   input,
@@ -82,24 +72,20 @@ html {
     touch-action: manipulation;
   }
 
-  /* Do NOT restrict global containers */
   .scroll-container {
-    touch-action: auto;           /* ✅ restore taps */
+    touch-action: auto;
   }
 }
 
-
 /* ===============================
-SAFE SCROLLBAR STYLING
+SCROLLBAR (SAFE)
 ================================ */
 
-/* Firefox */
 * {
   scrollbar-width: thin;
   scrollbar-color: #2a2a2e transparent;
 }
 
-/* Chrome / Edge / Safari */
 *::-webkit-scrollbar {
   width: 10px;
 }
@@ -120,7 +106,7 @@ SAFE SCROLLBAR STYLING
 }
 
 /* ===============================
-PREMIUM BACKGROUND ANIMATIONS
+BACKGROUND ANIMATIONS
 ================================ */
 
 @keyframes gradientMove {
@@ -130,9 +116,9 @@ PREMIUM BACKGROUND ANIMATIONS
 }
 
 @keyframes floatSlow {
-  0% { transform: translateY(0px) translateX(0px); }
-  50% { transform: translateY(-40px) translateX(20px); }
-  100% { transform: translateY(0px) translateX(0px); }
+  0% { transform: translate(0,0); }
+  50% { transform: translate(-40px,20px); }
+  100% { transform: translate(0,0); }
 }
 
 @keyframes gridMove {
@@ -148,30 +134,21 @@ NOISE OVERLAY (SAFE)
   content: "";
   position: absolute;
   inset: 0;
-  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
   pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
 }
 
 /* ===============================
-FADE / MICRO ANIMATIONS
+MICRO ANIMATIONS
 ================================ */
 
 @keyframes fadeIn {
-  0% { opacity: 0; transform: translateY(10px); }
-  100% { opacity: 1; transform: translateY(0); }
-}
-
-@keyframes fadeInSlow {
-  0% { opacity: 0; }
-  100% { opacity: 1; }
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
 .animate-fadeIn {
   animation: fadeIn 0.6s ease-out;
-}
-
-.animate-fadeInSlow {
-  animation: fadeInSlow 1s ease-out;
 }
 
 /* ===============================
@@ -185,15 +162,13 @@ HERO UNDERLINE
 
 .hero-underline {
   position: relative;
-  display: inline-block;
 }
 
 .hero-underline::after {
   content: "";
   position: absolute;
-  left: 0;
+  inset-x: 0;
   bottom: -0.15em;
-  width: 100%;
   height: 0.18em;
   background: linear-gradient(
     90deg,
@@ -203,19 +178,23 @@ HERO UNDERLINE
   border-radius: 999px;
   transform-origin: left;
   transform: scaleX(0);
-  opacity: 0;
   animation: underlineDraw 0.9s ease-out forwards;
-  animation-delay: 0.5s;
 }
 
 /* ===============================
-LIVING ACADEMIC CANVAS
+ACADEMIC CANVAS
 ================================ */
 
 @keyframes academicFade {
   0% { opacity: 0; transform: translateY(6px); }
   50% { opacity: 0.35; }
   100% { opacity: 0; transform: translateY(-6px); }
+}
+
+.academic-block,
+.academic-line,
+.academic-bullet {
+  animation: academicFade 8s ease-in-out infinite;
 }
 
 .academic-block {
@@ -225,14 +204,10 @@ LIVING ACADEMIC CANVAS
     rgba(255,255,255,0.04)
   );
   border-radius: 6px;
-  opacity: 0;
-  animation: academicFade 8s ease-in-out infinite;
 }
 
 .academic-line {
   background: rgba(255,255,255,0.18);
-  opacity: 0;
-  animation: academicFade 7s ease-in-out infinite;
 }
 
 .academic-bullet {
@@ -240,55 +215,10 @@ LIVING ACADEMIC CANVAS
   height: 6px;
   border-radius: 999px;
   background: rgba(255,255,255,0.4);
-  opacity: 0;
-  animation: academicFade 6s ease-in-out infinite;
-}
-
-.delay-1 { animation-delay: 0.5s; }
-.delay-2 { animation-delay: 1.5s; }
-.delay-3 { animation-delay: 2.5s; }
-.delay-4 { animation-delay: 3.5s; }
-
-@media (max-width: 768px) {
-  .academic-block,
-  .academic-line,
-  .academic-bullet {
-    opacity: 0.08;
-    animation-duration: 12s;
-  }
 }
 
 /* ===============================
-TOOLTIP / MICRO EFFECTS
-================================ */
-
-@keyframes langSwap {
-  0% { opacity: 0; transform: translateY(16px); }
-  20% { opacity: 1; transform: translateY(0); }
-  80% { opacity: 1; transform: translateY(0); }
-  100% { opacity: 0; transform: translateY(-16px); }
-}
-
-.animate-langSwap {
-  animation: langSwap 7s ease-in-out forwards;
-}
-
-@keyframes typingDot {
-  0% { opacity: 0.2; transform: translateY(0); }
-  20% { opacity: 1; transform: translateY(-3px); }
-  40% { opacity: 0.2; transform: translateY(0); }
-  100% { opacity: 0.2; }
-}
-
-.animate-typingDot {
-  animation: typingDot 1.4s infinite ease-in-out both;
-}
-
-.delay-150 { animation-delay: 0.15s; }
-.delay-300 { animation-delay: 0.3s; }
-
-/* ===============================
-BACKDROP BLUR (SAFE)
+BACKDROP BLUR (PERF SAFE)
 ================================ */
 
 .backdrop-blur,
@@ -299,7 +229,6 @@ BACKDROP BLUR (SAFE)
   isolation: isolate;
 }
 
-/* Mobile: reduce blur for performance */
 @media (max-width: 768px) {
   .backdrop-blur,
   .backdrop-blur-xl,
@@ -314,19 +243,14 @@ FORM STYLES
 ================================ */
 
 .clean-input {
-  @apply w-full rounded-xl bg-black/30
-  border border-white/10
-  px-4 py-3 text-white
-  placeholder-gray-500
-  outline-none
-  focus:border-white/30 transition;
+  @apply w-full rounded-xl bg-black/30 border border-white/10
+  px-4 py-3 text-white placeholder-gray-500
+  outline-none focus:border-white/30 transition;
 }
 
 .clean-select {
-  @apply w-full rounded-xl bg-black/30
-  border border-white/10
-  px-3 py-2 text-white
-  outline-none;
+  @apply w-full rounded-xl bg-black/30 border border-white/10
+  px-3 py-2 text-white outline-none;
 }
 
 .select-dark {
@@ -341,8 +265,7 @@ FORM STYLES
 
 /* ===============================
 SAFE GUARDS
-(NO global translateZ)
-(NO overflow hidden)
-(NO 3D stacking contexts)
-(NO will-change globally)
 ================================ */
+/* NO translateZ */
+/* NO overflow hidden */
+/* NO global will-change */
