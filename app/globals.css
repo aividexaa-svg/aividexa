@@ -264,6 +264,54 @@ FORM STYLES
 }
 
 /* ===============================
+🔥 MOBILE FIRST-TOUCH BLACK PATCH FIX (FINAL)
+================================ */
+
+/* Remove Android tap highlight */
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Prevent first-focus flash */
+html:focus-within,
+body:focus-within {
+  background-color: var(--background) !important;
+}
+
+/* ===============================
+SCROLL SAFETY FIX (FINAL)
+================================ */
+
+/* Desktop & general */
+html,
+body {
+  overscroll-behavior-y: auto;
+}
+
+/* Mobile-only overscroll control */
+@media (hover: none) and (pointer: coarse) {
+  html,
+  body {
+    overscroll-behavior-y: none;
+  }
+}
+
+/* Prevent active-state overlay on containers */
+button,
+a,
+div {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Restore text selection where required */
+input,
+textarea {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* ===============================
 SAFE GUARDS
 ================================ */
 /* NO translateZ */
