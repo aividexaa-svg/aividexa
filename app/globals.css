@@ -299,6 +299,15 @@ FORM STYLES
   background-color: var(--background);
   overscroll-behavior: contain;
 }
+/* 🔥 Prevent black viewport flash when URL bar collapses (Android Chrome) */
+html {
+  background-color: transparent;
+}
+
+/* Actual background stays on body */
+body {
+  background-color: var(--background);
+}
 
 /* ===============================
 SAFE GUARDS (FINAL)

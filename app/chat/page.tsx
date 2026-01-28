@@ -2729,7 +2729,7 @@ disabled={!pptTopic.trim()}
 
 
 {/* MAIN LAYOUT */}
-<div className="flex min-h-screen w-full bg-[#0E0E0F] text-white overflow-x-hidden blur-fix">
+<div className="flex min-h-[100svh] w-full bg-[#0E0E0F] text-white overflow-x-hidden blur-fix">
 
   {/* MAIN CHAT AREA */}
 <main
