@@ -889,6 +889,9 @@ useEffect(() => {
 
 
 useEffect(() => {
+  const root = document.getElementById("app-scroll-root");
+  if (!root) return;
+
   const shouldLock =
     settingsOpen ||
     editProfileOpen ||
@@ -901,13 +904,16 @@ useEffect(() => {
     helpOpen;
 
   if (shouldLock) {
-    document.body.style.overflow = "hidden";
+    root.style.overflow = "hidden";
+    root.style.touchAction = "none";
   } else {
-    document.body.style.overflow = "";
+    root.style.overflow = "auto";
+    root.style.touchAction = "auto";
   }
 
   return () => {
-    document.body.style.overflow = "";
+    root.style.overflow = "auto";
+    root.style.touchAction = "auto";
   };
 }, [
   settingsOpen,
@@ -2727,7 +2733,10 @@ disabled={!pptTopic.trim()}
 <div className="flex min-h-screen w-full bg-[#0E0E0F] text-white overflow-x-hidden blur-fix">
 
   {/* MAIN CHAT AREA */}
-<main className="relative flex flex-col flex-1 min-h-0 min-w-0">
+<main
+  id="app-scroll-root"
+  className="relative flex flex-col flex-1 min-h-0 min-w-0 overflow-y-auto"
+>
 
     {/* Header */}
 <div className="relative flex items-center gap-3 px-4 py-4 border-b border-white/10 blur-fix">
