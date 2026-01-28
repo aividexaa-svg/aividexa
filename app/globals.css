@@ -294,6 +294,11 @@ FORM STYLES
   background-color: #000 !important;
   color: #fff !important;
 }
+/* Prevent mobile Chrome black repaint during URL bar resize */
+#app-scroll-root {
+  background-color: var(--background);
+  overscroll-behavior: contain;
+}
 
 /* ===============================
 SAFE GUARDS (FINAL)

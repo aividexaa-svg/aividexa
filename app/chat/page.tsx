@@ -887,7 +887,6 @@ useEffect(() => {
   setCurrentUser(user);
 }, [user]);
 
-
 useEffect(() => {
   const root = document.getElementById("app-scroll-root");
   if (!root) return;
@@ -904,15 +903,15 @@ useEffect(() => {
     helpOpen;
 
   if (shouldLock) {
-    root.style.overflow = "hidden";
+    root.style.pointerEvents = "none";
     root.style.touchAction = "none";
   } else {
-    root.style.overflow = "auto";
+    root.style.pointerEvents = "auto";
     root.style.touchAction = "auto";
   }
 
   return () => {
-    root.style.overflow = "auto";
+    root.style.pointerEvents = "auto";
     root.style.touchAction = "auto";
   };
 }, [
