@@ -39,6 +39,28 @@ body {
 }
 
 /* ===============================
+🔥 MOBILE VIEWPORT & URL BAR FIX (CRITICAL)
+================================ */
+
+/* Dynamic viewport height – fixes black gap when browser bar hides */
+html,
+body {
+  min-height: 100svh;   /* small viewport */
+  min-height: 100dvh;   /* dynamic viewport */
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* Always paint something behind the viewport */
+#__next,
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background: var(--background);
+  z-index: -1;
+}
+
+/* ===============================
 SCROLL (UNIVERSAL & SAFE)
 ================================ */
 
