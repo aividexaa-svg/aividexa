@@ -11,17 +11,20 @@ const razorpay = new Razorpay({
   key_secret: process.env.RAZORPAY_KEY_SECRET!,
 });
 
-type CreateSubscriptionBody = {
-  planKey: PlanKey;
-  billing: BillingCycle;
-  userId: string;
-};
-
 export async function POST(req: Request) {
   try {
-    const body: CreateSubscriptionBody = await req.json();
+    const body = await req.json();
 
-    const { planKey, billing, userId } = body;
+    const planKey = body.planKey as PlanKey;
+    const billing = body.billing as BillingCycle;
+    const userId = body.userId as string;
+
+    if (!planKey || !billing || !userId) {
+      return NextResponse.json(
+        { error: "Missing params" },
+        { status: 400 }
+      );
+    }
 
     const planId = RAZORPAY_PLANS[planKey][billing];
 
@@ -29,6 +32,7 @@ export async function POST(req: Request) {
       plan_id: planId,
       customer_notify: 1,
       total_count: billing === "monthly" ? 12 : 1,
+
       notes: {
         userId,
         planKey,
@@ -38,7 +42,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json(subscription);
   } catch (err) {
-    console.error(err);
+    console.error("Create subscription error:", err);
     return NextResponse.json(
       { error: "Failed to create subscription" },
       { status: 500 }

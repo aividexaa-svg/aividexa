@@ -57,6 +57,8 @@ export default function CheckoutClient() {
   );
 
   const [loading, setLoading] = useState(false);
+  const [showSuccess, setShowSuccess] = useState(false);
+const [checkingUpgrade, setCheckingUpgrade] = useState(false);
 
   const plan = safePlanKey ? PLAN_CONFIG[safePlanKey] : null;
 
@@ -113,14 +115,19 @@ export default function CheckoutClient() {
 
     const subscription = await res.json();
 
-    const options = {
-      key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID,
-      subscription_id: subscription.id,
-      name: "AI Videxa",
-      description: `${plan.name} (${billing})`,
-      prefill: { email: user.email },
-      theme: { color: "#0A0D12" },
-    };
+   const options = {
+  key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID,
+  subscription_id: subscription.id,
+  name: "AI Videxa",
+  description: `${plan.name} (${billing})`,
+  prefill: { email: user.email },
+  theme: { color: "#0A0D12" },
+
+  handler: function () {
+    // 🔥 Payment completed → now wait for webhook upgrade
+    waitForUpgrade();
+  },
+};
 
     // @ts-ignore
     const rzp = new window.Razorpay(options);
@@ -131,6 +138,37 @@ export default function CheckoutClient() {
   } finally {
     setLoading(false);
   }
+};
+
+const waitForUpgrade = async () => {
+  if (!user || !safePlanKey) return;
+
+  setCheckingUpgrade(true);
+
+  const maxAttempts = 10; // ~20 seconds
+  let attempts = 0;
+
+  const interval = setInterval(async () => {
+    attempts++;
+
+    const res = await fetch("/api/user/plan"); 
+    const data = await res.json();
+
+    if (data.plan === safePlanKey) {
+      clearInterval(interval);
+      setShowSuccess(true);
+
+      // redirect after animation
+      setTimeout(() => {
+        router.push("/chat");
+      }, 2000);
+    }
+
+    if (attempts >= maxAttempts) {
+      clearInterval(interval);
+      setCheckingUpgrade(false);
+    }
+  }, 2000);
 };
 
  
@@ -349,9 +387,12 @@ export default function CheckoutClient() {
                 disabled:opacity-60
               "
             >
-              {loading
-                ? "Processing..."
-                : `Pay ₹${price}`}
+           {checkingUpgrade
+  ? "Finalizing upgrade…"
+  : loading
+  ? "Processing…"
+  : `Pay ₹${price}`}
+
             </motion.button>
 
             {/* TRUST */}
@@ -367,6 +408,38 @@ export default function CheckoutClient() {
               <p>✔ Cancel anytime</p>
             </div>
           </motion.div>
+          {showSuccess && (
+  <motion.div
+    initial={{ opacity: 0 }}
+    animate={{ opacity: 1 }}
+    className="fixed inset-0 z-[999] flex items-center justify-center bg-black/80"
+  >
+    <motion.div
+      initial={{ scale: 0.6, opacity: 0 }}
+      animate={{ scale: 1, opacity: 1 }}
+      transition={{ type: "spring", stiffness: 260, damping: 20 }}
+      className="flex flex-col items-center gap-4"
+    >
+      <motion.div
+        initial={{ scale: 0 }}
+        animate={{ scale: 1 }}
+        transition={{ delay: 0.2, type: "spring" }}
+        className="w-20 h-20 rounded-full bg-green-500 flex items-center justify-center"
+      >
+        <span className="text-black text-4xl">✓</span>
+      </motion.div>
+
+      <h2 className="text-white text-xl font-semibold">
+        Upgrade Successful
+      </h2>
+
+      <p className="text-white/60 text-sm">
+        Redirecting to chat…
+      </p>
+    </motion.div>
+  </motion.div>
+)}
+
         </div>
       </section>
     </main>
