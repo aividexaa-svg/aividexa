@@ -4626,7 +4626,7 @@ const coreRef = useRef<HTMLDivElement>(null);
 
   <PriceCard
     title="Pro"
-    price={billing === "monthly" ? "₹299 / month" : "₹2999 / year"}
+    price={billing === "monthly" ? "₹1 / month" : "₹19 / year"}
     features={[
       billing === "yearly" ? "Save 2 months" : "Research & PPT tools",
       "Priority access",
@@ -5701,7 +5701,7 @@ const [hasSwitchedBilling, setHasSwitchedBilling] = useState(false);
     <PriceCard
   title="Student+"
   highlight
-  price={billing === "monthly" ? "₹299 / month" : "₹2,499 / year"}
+  price={billing === "monthly" ? "₹1 / month" : "₹2,499 / year"}
   badge={billing === "yearly" ? "Save 30%" : undefined}
   hasSwitchedBilling={hasSwitchedBilling}
   features={[
@@ -5715,7 +5715,7 @@ const [hasSwitchedBilling, setHasSwitchedBilling] = useState(false);
 
    <PriceCard
   title="Pro"
-  price={billing === "monthly" ? "₹599 / month" : "₹4,999 / year"}
+  price={billing === "monthly" ? "₹499 / month" : "₹4,999 / year"}
   badge={billing === "yearly" ? "Best value" : undefined}
   hasSwitchedBilling={hasSwitchedBilling}
   features={[

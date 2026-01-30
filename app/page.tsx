@@ -528,7 +528,7 @@ useEffect(() => {
   <PriceCard
   title="Student+"
   highlight
-  price={billing === "monthly" ? "₹299 / month" : "₹2,499 / year"}
+  price={billing === "monthly" ? "₹1 / month" : "₹2,499 / year"}
   badge={billing === "yearly" ? "Save 30%" : undefined}
   hasSwitchedBilling={hasSwitchedBilling}
   currentPlan={user?.plan} // 🔥 ADD THIS
@@ -557,7 +557,7 @@ useEffect(() => {
 
  <PriceCard
   title="Pro"
-  price={billing === "monthly" ? "₹599 / month" : "₹4,999 / year"}
+  price={billing === "monthly" ? "₹499 / month" : "₹4,999 / year"}
   badge={billing === "yearly" ? "Best value" : undefined}
   hasSwitchedBilling={hasSwitchedBilling}
   currentPlan={user?.plan} // 🔥 ADD THIS

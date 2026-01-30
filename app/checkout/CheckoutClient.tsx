@@ -9,8 +9,8 @@ import { motion } from "framer-motion";
 const PLAN_CONFIG: any = {
   student_plus: {
     name: "Student+",
-    monthly: 299,
-    yearly: 2499,
+    monthly: 1,
+    yearly: 2388,
     features: [
       "100 chats per day",
       "Advanced Assignment tool",
@@ -24,7 +24,7 @@ const PLAN_CONFIG: any = {
   },
   pro: {
     name: "Pro",
-    monthly: 599,
+    monthly: 499,
     yearly: 4999,
     features: [
       "Unlimited chats",
@@ -66,6 +66,15 @@ export default function CheckoutClient() {
     }
   }, [safePlanKey, router]);
 
+
+  useEffect(() => {
+  const script = document.createElement("script");
+  script.src = "https://checkout.razorpay.com/v1/checkout.js";
+  script.async = true;
+  document.body.appendChild(script);
+}, []);
+
+
   if (!plan) {
     return (
       <main className="min-h-screen flex items-center justify-center text-white">
@@ -86,20 +95,45 @@ export default function CheckoutClient() {
         )
       : 0;
 
-  const onPay = async () => {
-    setLoading(true);
+ const onPay = async () => {
+  if (!user || !safePlanKey) return;
 
-    // TODO: call backend to create Razorpay / Stripe order
-    // const res = await fetch("/api/create-order", { ... })
-    // const { orderId } = await res.json()
+  setLoading(true);
 
-    // For now: simulate
-    setTimeout(() => {
-      alert("Payment flow will open here");
-      setLoading(false);
-    }, 1200);
-  };
+  try {
+    const res = await fetch("/api/razorpay/create-subscription", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        planKey: safePlanKey,
+        billing,
+        userId: user.uid,
+      }),
+    });
 
+    const subscription = await res.json();
+
+    const options = {
+      key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID,
+      subscription_id: subscription.id,
+      name: "AI Videxa",
+      description: `${plan.name} (${billing})`,
+      prefill: { email: user.email },
+      theme: { color: "#0A0D12" },
+    };
+
+    // @ts-ignore
+    const rzp = new window.Razorpay(options);
+    rzp.open();
+  } catch (err) {
+    alert("Payment failed");
+    console.error(err);
+  } finally {
+    setLoading(false);
+  }
+};
+
+ 
   return (
     <main className="relative min-h-screen text-white overflow-hidden">
       {/* BACKGROUND */}
