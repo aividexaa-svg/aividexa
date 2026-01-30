@@ -76,6 +76,16 @@ const [checkingUpgrade, setCheckingUpgrade] = useState(false);
   document.body.appendChild(script);
 }, []);
 
+useEffect(() => {
+  if (checkingUpgrade) {
+    const failSafe = setTimeout(() => {
+      console.warn("⏳ Checkout timeout — forcing redirect");
+      router.replace("/chat");
+    }, 25000); // 25s hard stop
+
+    return () => clearTimeout(failSafe);
+  }
+}, [checkingUpgrade, router]);
 
   if (!plan) {
     return (
@@ -115,7 +125,7 @@ const [checkingUpgrade, setCheckingUpgrade] = useState(false);
 
     const subscription = await res.json();
 
-   const options = {
+const options = {
   key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID,
   subscription_id: subscription.id,
   name: "AI Videxa",
@@ -123,11 +133,16 @@ const [checkingUpgrade, setCheckingUpgrade] = useState(false);
   prefill: { email: user.email },
   theme: { color: "#0A0D12" },
 
-  handler: function () {
-    // 🔥 Payment completed → now wait for webhook upgrade
-    waitForUpgrade();
+  modal: {
+    ondismiss: () => {
+       setCheckingUpgrade(true); // 👈 add
+      // 🔥 ALWAYS start upgrade check after checkout closes
+      waitForUpgrade();
+    },
   },
 };
+
+
 
     // @ts-ignore
     const rzp = new window.Razorpay(options);
@@ -151,25 +166,43 @@ const waitForUpgrade = async () => {
   const interval = setInterval(async () => {
     attempts++;
 
-    const res = await fetch("/api/user/plan"); 
-    const data = await res.json();
+    try {
+      const res = await fetch("/api/user/plan");
+      const data = await res.json();
 
-    if (data.plan === safePlanKey) {
-      clearInterval(interval);
-      setShowSuccess(true);
+      // ✅ SUCCESS → show animation → redirect
+      if (data.plan === safePlanKey) {
+        clearInterval(interval);
+        setShowSuccess(true);
+        setCheckingUpgrade(false);
 
-      // redirect after animation
-      setTimeout(() => {
-        router.push("/chat");
-      }, 2000);
-    }
+        setTimeout(() => {
+          router.replace("/chat");
+        }, 2000);
 
-    if (attempts >= maxAttempts) {
+        return;
+      }
+
+      // ⏳ TIMEOUT FAIL-SAFE → still go to chat
+      if (attempts >= maxAttempts) {
+        clearInterval(interval);
+        setCheckingUpgrade(false);
+
+        console.warn("⚠️ Upgrade check timeout, redirecting anyway");
+
+        router.replace("/chat");
+      }
+    } catch (err) {
       clearInterval(interval);
       setCheckingUpgrade(false);
+      console.error("Upgrade check failed:", err);
+
+      // 🚑 absolute fallback
+      router.replace("/chat");
     }
   }, 2000);
 };
+
 
  
   return (
@@ -374,7 +407,7 @@ const waitForUpgrade = async () => {
             <motion.button
               whileHover={{ scale: 1.03 }}
               whileTap={{ scale: 0.96 }}
-              disabled={loading}
+              disabled={loading || checkingUpgrade}
               onClick={onPay}
               className="
                 mt-6 w-full px-6 py-3 rounded-xl
