@@ -385,6 +385,23 @@ useEffect(() => {
   setExportLimitReached(left <= 0);
 }, [user, exportLimit, hasUnlimited]);
 
+useEffect(() => {
+  if (!user) return;
+
+  const ref = doc(db, "users", user.uid);
+
+  const unsub = onSnapshot(ref, (snap) => {
+    if (!snap.exists()) return;
+
+    // 🔥 THIS is the missing link
+    setCurrentUser((prev: any) => ({
+      ...prev,
+      ...snap.data(),
+    }));
+  });
+
+  return () => unsub();
+}, [user]);
 
 
 useEffect(() => {

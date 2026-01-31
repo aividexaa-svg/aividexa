@@ -1,6 +1,11 @@
 "use client";
 
-import { createContext, useContext, useEffect, useState } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useState,
+} from "react";
 import { auth, db } from "@/firebase/firebaseConfig";
 import {
   onAuthStateChanged,
@@ -8,47 +13,89 @@ import {
   browserLocalPersistence,
   setPersistence,
   reload,
+  User as FirebaseUser,
 } from "firebase/auth";
-import { doc, getDoc } from "firebase/firestore";
+import {
+  doc,
+  onSnapshot,
+  Unsubscribe,
+} from "firebase/firestore";
+
+/* ================= TYPES ================= */
 
 interface AuthContextType {
-  user: any;
+  user: any;              // merged Auth + Firestore
+  loading: boolean;       // 🔥 important for gating UI
   logout: () => Promise<void>;
 }
 
+/* ================= CONTEXT ================= */
+
 const AuthContext = createContext<AuthContextType>({
   user: null,
+  loading: true,
   logout: async () => {},
 });
 
-export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
-  const [user, setUser] = useState<any>(undefined);
+/* ================= PROVIDER ================= */
+
+export const AuthProvider = ({
+  children,
+}: {
+  children: React.ReactNode;
+}) => {
+  const [user, setUser] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let firestoreUnsub: Unsubscribe | null = null;
+
     const setup = async () => {
       await setPersistence(auth, browserLocalPersistence);
 
-      const unsub = onAuthStateChanged(auth, async (u) => {
-        if (u) {
-          // ensure the latest Auth data (photoURL) is loaded
-          await reload(u);
+      const authUnsub = onAuthStateChanged(
+        auth,
+        async (authUser: FirebaseUser | null) => {
+          // 🔄 cleanup old snapshot
+          if (firestoreUnsub) {
+            firestoreUnsub();
+            firestoreUnsub = null;
+          }
 
-          const ref = doc(db, "users", u.uid);
-          const snap = await getDoc(ref);
-          const fsData = snap.exists() ? snap.data() : {};
+          if (!authUser) {
+            setUser(null);
+            setLoading(false);
+            return;
+          }
 
-          // IMPORTANT: Auth (u) overrides Firestore fsData
-          setUser({
-            ...fsData,
-            ...u,
-            photoURL: u.photoURL, // ensure new Cloudinary URL wins
+          // 🔥 ensure latest auth profile
+          await reload(authUser);
+
+          const userRef = doc(db, "users", authUser.uid);
+
+          // 🔥 GLOBAL LIVE SNAPSHOT
+          firestoreUnsub = onSnapshot(userRef, (snap) => {
+            const fsData = snap.exists() ? snap.data() : {};
+
+            // ✅ Auth always wins over Firestore
+            setUser({
+              ...fsData,
+              ...authUser,
+              uid: authUser.uid,
+              email: authUser.email,
+              displayName: authUser.displayName,
+              photoURL: authUser.photoURL,
+            });
+
+            setLoading(false);
           });
-        } else {
-          setUser(null);
         }
-      });
+      );
 
-      return () => unsub();
+      return () => {
+        authUnsub();
+        if (firestoreUnsub) firestoreUnsub();
+      };
     };
 
     setup();
@@ -60,10 +107,12 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   };
 
   return (
-    <AuthContext.Provider value={{ user, logout }}>
+    <AuthContext.Provider value={{ user, loading, logout }}>
       {children}
     </AuthContext.Provider>
   );
 };
+
+/* ================= HOOK ================= */
 
 export const useAuth = () => useContext(AuthContext);

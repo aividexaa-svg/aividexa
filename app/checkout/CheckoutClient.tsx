@@ -76,16 +76,6 @@ const [checkingUpgrade, setCheckingUpgrade] = useState(false);
   document.body.appendChild(script);
 }, []);
 
-useEffect(() => {
-  if (checkingUpgrade) {
-    const failSafe = setTimeout(() => {
-      console.warn("⏳ Checkout timeout — forcing redirect");
-      router.replace("/chat");
-    }, 25000); // 25s hard stop
-
-    return () => clearTimeout(failSafe);
-  }
-}, [checkingUpgrade, router]);
 
   if (!plan) {
     return (
@@ -124,7 +114,6 @@ useEffect(() => {
     });
 
     const subscription = await res.json();
-
 const options = {
   key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID,
   subscription_id: subscription.id,
@@ -133,14 +122,22 @@ const options = {
   prefill: { email: user.email },
   theme: { color: "#0A0D12" },
 
+  // ✅ THIS fires ONLY after successful payment
+  handler: function () {
+    console.log("✅ Payment completed");
+
+    setCheckingUpgrade(true);
+    waitForUpgrade(); // start polling AFTER success
+  },
+
+  // ❌ do NOT redirect from here
   modal: {
     ondismiss: () => {
-       setCheckingUpgrade(true); // 👈 add
-      // 🔥 ALWAYS start upgrade check after checkout closes
-      waitForUpgrade();
+      console.log("Checkout closed (no action)");
     },
   },
 };
+
 
 
 
