@@ -256,7 +256,7 @@ const [settings, setSettings] = useState({
 });
 
 
-  const { user, logout } = useAuth();
+const { user, loading, logout } = useAuth();
 const [currentUser, setCurrentUser] = useState<any>(user);
 
 /* ================= free & premium ================= */
@@ -959,11 +959,16 @@ useEffect(() => {
 
 
 
+
+
 useEffect(() => {
-  if (user === null) {
-    window.location.href = "/login";
+  if (loading) return;          // ⛔ wait for auth to hydrate
+
+  if (!user) {
+    router.replace("/login");   // ✅ SPA-safe redirect
   }
-}, [user]);
+}, [user, loading, router]);
+
 
   
 {/* text area */}
@@ -3234,9 +3239,34 @@ disabled={!pptTopic.trim()}
 
                 <div className="flex flex-col leading-tight">
                   <span className="text-sm font-semibold">{currentUser?.displayName || "User"}</span>
-                  <span className="text-[11px] text-gray-400">Free Plan</span>
+<span className="text-[11px] text-gray-400">{label} Plan</span>
                 </div>
-              </div>
+                {/* 👇 MY PLAN BUTTON */}
+ <button
+  onClick={() => {
+    setProfileOpen(false);
+router.push("/api/user/my-plan");
+  }}
+  className="
+    mt-1
+    inline-flex items-center gap-1
+    text-[10px]
+    font-medium
+    px-2 py-0.5
+    rounded-full
+    bg-white/5
+    text-gray-300
+    border border-white/10
+    hover:bg-white/10
+    hover:text-white
+    transition-all
+  "
+>
+  My plan
+  <span className="opacity-60">→</span>
+</button>
+</div>
+              
 
              
 
